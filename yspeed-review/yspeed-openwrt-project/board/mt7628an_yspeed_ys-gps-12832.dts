@@ -56,6 +56,27 @@
                         gpios = <&gpio 38 GPIO_ACTIVE_LOW>;
                         debounce-interval = <60>;
                 };
+
+                lcd-up {
+                        label = "LCD Up";
+                        linux,code = <KEY_UP>;
+                        gpios = <&gpio 18 GPIO_ACTIVE_LOW>;
+                        debounce-interval = <30>;
+                };
+
+                lcd-enter {
+                        label = "LCD Enter";
+                        linux,code = <KEY_ENTER>;
+                        gpios = <&gpio 23 GPIO_ACTIVE_LOW>;
+                        debounce-interval = <30>;
+                };
+
+                lcd-down {
+                        label = "LCD Down";
+                        linux,code = <KEY_DOWN>;
+                        gpios = <&gpio 26 GPIO_ACTIVE_LOW>;
+                        debounce-interval = <30>;
+                };
         };
 };
 
@@ -93,6 +114,8 @@
 
 &spi0 {
         status = "okay";
+        pinctrl-names = "default";
+        pinctrl-0 = <&spi_pins>, <&spi_cs1_pins>;
 
         flash@0 {
                 compatible = "jedec,spi-nor";
@@ -138,6 +161,25 @@
                                 reg = <0x00050000 0x01fb0000>;
                         };
                 };
+        };
+
+        /*
+         * Ribbon-connected front-panel TFT. The vendor GPIO map records
+         * GPIO6 as the CS1 pad, GPIO16 D/C, GPIO14 reset and GPIO19 backlight.
+         * CS1 is provided by the MT7628 SPI pinmux group; do not request GPIO6
+         * separately while the hardware SPI controller owns chip select.
+         */
+        display@1 {
+                compatible = "sitronix,st7789v";
+                reg = <1>;
+                spi-max-frequency = <32000000>;
+                buswidth = <8>;
+                rotate = <0>;
+                fps = <30>;
+                bgr;
+                dc-gpios = <&gpio 16 GPIO_ACTIVE_HIGH>;
+                reset-gpios = <&gpio 14 GPIO_ACTIVE_LOW>;
+                led-gpios = <&gpio 19 GPIO_ACTIVE_HIGH>;
         };
 };
 
