@@ -139,7 +139,7 @@ int main(void) {
         strftime(line,sizeof(line),"%H:%M:%S",&tmv); text(&s,12,78,line,3,white);
         strftime(line,sizeof(line),"%Y-%m-%d",&tmv); text(&s,12,112,line,2,white);
         rect(&s,10,155,s.var.xres-20,2,accent);
-        text(&s,12,170,"NETWORK ETH0 2",1,muted);
+        text(&s,12,170,"NETWORK ETH0.2",1,muted);
         text(&s,12,190,ip,1,white);
         text(&s,12,225,"GNSS STATUS",1,muted);
         text(&s,12,245,gps,1,white);
