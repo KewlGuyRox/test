@@ -2,12 +2,13 @@
 
 ## Status
 
-This is a reproducible **build project**, not a compiled firmware image. The
-current ChatGPT execution container had no DNS/network route to the OpenWrt
-source host and no installed `dtc` or MIPS cross-compiler. The build script is
-provided for an Internet-connected Linux build host. It pins OpenWrt 25.12.6
-and the package/LuCI feed commits recorded in the official 25.12.6
-`feeds.buildinfo`.
+This repository contains the build project and a **previous candidate RAM-boot
+uImage** under `artifacts/`. That candidate predates the source corrections in
+this branch and is not evidence that the corrected source has been rebuilt.
+The build script pins OpenWrt 25.12.6 and the package/LuCI feed commits recorded
+in the official 25.12.6 `feeds.buildinfo`. A fresh build must be run on an
+Internet-connected Linux x86-64 host; the current remote execution environment
+cannot run the full OpenWrt cross-build.
 
 ## Board and network assumptions
 
@@ -33,9 +34,10 @@ and the package/LuCI feed commits recorded in the official 25.12.6
   1-4 plus CPU port 6 tagged; VLAN 2 port 0 plus CPU port 6 tagged. These are
   hardware switch VLAN definitions, not a statement that both VLANs are used
   for IP networking.
-- OpenWrt's standard firewall defaults are retained; a first-boot UCI-defaults
-  script adds only UDP/123 from the WAN zone so upstream LAN NTP clients can
-  query Chrony. This does not alter the running vendor device.
+- The firewall explicitly permits UDP/123 from the logical `wan` zone
+  (bound to `eth0.2`) so NTP clients on the owner's existing network can query
+  Chrony. The rule is in the checked-in firewall configuration; no separate
+  first-boot UCI-defaults script is required.
 - No Wi-Fi functionality: no radio nodes enabled and no Wi-Fi packages added.
   USB 2.0/OHCI host support is retained because it is present in the vendor DTB.
 - GNSS UART1 remains at its existing 9600-baud setting. No receiver commands
@@ -43,9 +45,10 @@ and the package/LuCI feed commits recorded in the official 25.12.6
 - PPS is GPIO11 active-high. GPS/PPS Chrony refclocks remain `noselect` until
   UTC-second association is verified.
 - DS1307 RTC is at I2C `0x68`. The display is a 240x320 ST7789 SPI TFT, not
-  an SH1106 I2C OLED. The checked-in DTS and prior compiled DTB still contain
-  a stale SH1106 node; ST7789 SPI chip-select and control GPIO wiring must be
-  reconciled before the display driver can safely be enabled. The current
+  an SH1106 I2C OLED. The corrected source DTS no longer declares the incorrect SH1106 device;
+  the checked-in compiled DTB/DTS artifacts are from the earlier candidate and
+  still show that obsolete node. ST7789 SPI chip-select and control GPIO wiring
+  must be reconciled before the display driver can safely be enabled. The current
   candidate image must therefore be treated as a bring-up baseline, not a
   display-complete release.
 
@@ -134,7 +137,7 @@ The network contract is intentionally unambiguous:
 
 The ST7789 driver source exists in the captured Linux 6.12.112 tree, but the
 project does not yet have a verified board-level ST7789 device-tree binding or
-an OpenWrt kernel package selection for it. The stale SH1106 node must not be
+an OpenWrt kernel package selection for it. The old compiled artifact's SH1106 node must not be
 mistaken for working display support. This is an explicit hardware-integration
 gate, not a reason to guess GPIO assignments. The display is not considered
 supported until the actual D/C, reset, backlight, and CS wiring is confirmed
