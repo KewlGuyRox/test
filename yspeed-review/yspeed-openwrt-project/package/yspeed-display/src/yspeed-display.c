@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
@@ -104,8 +106,21 @@ static int json_number(const char *line, const char *key, double *v) {
     char *end=NULL; *v=strtod(p,&end); return end!=p;
 }
 static void get_gps(char *out, size_t n) {
-    FILE *f=popen("timeout 2 gpspipe -w -n 20 2>/dev/null","r");
-    if(!f){snprintf(out,n,"GPSD UNAVAILABLE");return;}
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) { snprintf(out,n,"GPSD UNAVAILABLE"); return; }
+    struct timeval tv = {.tv_sec=2,.tv_usec=0};
+    setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));
+    struct sockaddr_in addr = {.sin_family=AF_INET,.sin_port=htons(2947)};
+    addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
+    if (connect(fd,(struct sockaddr *)&addr,sizeof(addr)) < 0) {
+        close(fd); snprintf(out,n,"GPSD UNAVAILABLE"); return;
+    }
+    static const char watch[] = "?WATCH={\"enable\":true,\"json\":true};\n";
+    if (write(fd,watch,sizeof(watch)-1) < 0) {
+        close(fd); snprintf(out,n,"GPSD UNAVAILABLE"); return;
+    }
+    FILE *f=fdopen(fd,"r");
+    if(!f){close(fd);snprintf(out,n,"GPSD UNAVAILABLE");return;}
     char line[512]; int found=0;
     while(fgets(line,sizeof(line),f)) {
         if(!strstr(line,"\"class\":\"TPV\"")) continue;
@@ -115,7 +130,7 @@ static void get_gps(char *out, size_t n) {
             snprintf(out,n,"FIX %.4f %.4f",lat,lon); found=1; break;
         }
     }
-    pclose(f);
+    fclose(f);
     if(!found) snprintf(out,n,"WAITING FOR GNSS FIX");
 }
 int main(void) {
