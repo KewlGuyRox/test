@@ -126,7 +126,10 @@ fi
 if ! grep -q '^CONFIG_TARGET_DEVICE_ramips_mt76x8_DEVICE_yspeed_ys-gps-12832=y$' "$SRC/.config"; then
   echo "YSPEED profile is not selected in .config" >&2; exit 4
 fi
-if ! grep -q '^CONFIG_CCACHE=y
+if ! grep -q '^CONFIG_CCACHE=y$' "$SRC/.config"; then
+  echo "Compiler cache support was dropped by defconfig" >&2; exit 4
+fi
+for package in kmod-fb-tft-yspeed kmod-fb-tft-st7789v-yspeed yspeed-display kmod-gpio-button-hotplug dropbear uhttpd; do
   if ! grep -q "^CONFIG_PACKAGE_${package}=y$" "$SRC/.config"; then
     echo "Required ST7789/display package was dropped by defconfig: $package" >&2
     exit 4
