@@ -25,8 +25,8 @@ cp "$PROJECT_DIR/feeds.conf" "$SRC/feeds.conf"
 cp "$PROJECT_DIR/board/mt7628an_yspeed_ys-gps-12832.dts" \
    "$SRC/target/linux/ramips/dts/mt7628an_yspeed_ys-gps-12832.dts"
 cp -a "$PROJECT_DIR/package/yspeed-display" "$SRC/package/"
-"$PROJECT_DIR/scripts/append-profile.sh" "$SRC"
-"$PROJECT_DIR/scripts/disable-wireless-defaults.sh" "$SRC"
+sh "$PROJECT_DIR/scripts/append-profile.sh" "$SRC"
+sh "$PROJECT_DIR/scripts/disable-wireless-defaults.sh" "$SRC"
 
 # Add the ST7789V FBTFT kernel package absent from the upstream OpenWrt
 # package catalogue. Its source is present in the pinned Linux 6.12 tree.
