@@ -39,7 +39,7 @@ jobs:
         with:
           path: |
             ${{ runner.temp }}/yspeed-openwrt-25.12.6/openwrt/dl
-            ~/.cache/ccache
+            ${{ runner.temp }}/ccache
           key: yspeed-openwrt-${{ runner.os }}-25.12.6-${{ hashFiles('yspeed-review/yspeed-openwrt-project/feeds.conf', 'yspeed-review/yspeed-openwrt-project/config/ramips-mt76x8-yspeed.config', 'yspeed-review/yspeed-openwrt-project/board/mt7628an_yspeed_ys-gps-12832.dts') }}
           restore-keys: |
             yspeed-openwrt-${{ runner.os }}-25.12.6-
@@ -61,7 +61,7 @@ jobs:
         working-directory: yspeed-review/yspeed-openwrt-project
         env:
           JOBS: '4'
-          CCACHE_DIR: ~/.cache/ccache
+          CCACHE_DIR: ${{ runner.temp }}/ccache
         run: |
           bash scripts/build.sh "$RUNNER_TEMP/yspeed-openwrt-25.12.6"
 
