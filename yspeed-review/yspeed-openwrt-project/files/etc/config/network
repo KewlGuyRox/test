@@ -7,10 +7,6 @@ config interface 'loopback'
 config globals 'globals'
         option ula_prefix 'auto'
 
-config device
-        option name 'eth0.2'
-        option macaddr '60:70:72:59:22:0b'
-
 config interface 'wan'
         option device 'eth0.2'
         option proto 'dhcp'
