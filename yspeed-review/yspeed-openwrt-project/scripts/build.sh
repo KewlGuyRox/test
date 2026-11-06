@@ -117,6 +117,27 @@ END { if (!device_ok || !proto_ok || bad) exit 1 }
 }
 make -C "$SRC" defconfig
 
+# The generic upstream ST7789V driver defaults to the HSD20 IPS panel
+# electrical/gamma profile. The YSPEED vendor firmware uses a different
+# userspace ST7789 implementation, so do not assume that profile matches.
+# Build a second RAM-only test using the driver's generic ST7789V profile.
+make -C "$SRC" target/linux/prepare V=s
+ST7789_SOURCE="$(find "$SRC/build_dir/target-mipsel_24kc_musl/linux-ramips_mt76x8" \
+  -type f -path '*/drivers/staging/fbtft/fb_st7789v.c' -print -quit)"
+[[ -n "$ST7789_SOURCE" && -f "$ST7789_SOURCE" ]] || {
+  echo "ST7789V kernel source not found after target/linux/prepare" >&2
+  exit 4
+}
+grep -qxF '#define HSD20_IPS 1' "$ST7789_SOURCE" || {
+  echo "Unexpected upstream ST7789V source; refusing unreviewed edit" >&2
+  exit 4
+}
+sed -i 's/^#define HSD20_IPS 1$/#define HSD20_IPS 0/' "$ST7789_SOURCE"
+grep -qxF '#define HSD20_IPS 0' "$ST7789_SOURCE" || {
+  echo "Failed to select generic ST7789V initialization profile" >&2
+  exit 4
+}
+
 # Hard guard: this project must not produce a flash/sysupgrade/factory image.
 if ! grep -q '^CONFIG_TARGET_ROOTFS_INITRAMFS=y$' "$SRC/.config"; then
   echo "INITRAMFS configuration did not survive defconfig" >&2; exit 4
