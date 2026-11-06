@@ -152,7 +152,7 @@ DTB="$(find "$SRC/build_dir" -type f -name 'image-mt7628an_yspeed_ys-gps-12832.d
 [[ -x "$DTC" && -n "$DTB" ]] || { echo "Compiled DTB or host dtc not found" >&2; exit 6; }
 mkdir -p "$WORKDIR/artifacts"
 "$DTC" -I dtb -O dts "$DTB" > "$WORKDIR/artifacts/yspeed-compiled.dts"
-for token in 'YSPEED YS-GPS-12832' 'pps-gpio' 'dallas,ds1307' 'denx,uimage' 'yspeed,ys-gps-12832' 'mac-address@2e' 'sitronix,st7789v' 'display@1' 'spi_cs1_pins' 'LCD Up' 'LCD Enter' 'LCD Down'; do
+for token in 'YSPEED YS-GPS-12832' 'pps-gpio' 'dallas,ds1307' 'denx,uimage' 'yspeed,ys-gps-12832' 'mac-address@2e' 'sitronix,st7789v' 'display@1' 'pinctrl-0' 'LCD Up' 'LCD Enter' 'LCD Down'; do
   grep -qF "$token" "$WORKDIR/artifacts/yspeed-compiled.dts" || { echo "DTB check missing: $token" >&2; exit 7; }
 done
 
