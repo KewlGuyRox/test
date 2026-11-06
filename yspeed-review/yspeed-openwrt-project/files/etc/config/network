@@ -10,7 +10,7 @@ config globals 'globals'
 config interface 'wan'
         option device 'eth0.2'
         option proto 'dhcp'
-        option peerdns '1'
+        option peerdns '0'
 
 config interface 'wan6'
         option device '@wan'
