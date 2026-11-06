@@ -16,16 +16,23 @@ and the package/LuCI feed commits recorded in the official 25.12.6
 - Protected regions: U-Boot `0x00000000+0x30000`, environment
   `0x00030000+0x10000`, factory `0x00040000+0x10000`.
 - Firmware partition: `0x00050000+0x01fb0000` (32,448 KiB).
-- The Ethernet uplink is the WAN port. It connects to the user's existing LAN
-  and obtains address, gateway and DNS by DHCP on `eth0.2`.
+- `eth0.2` is the **only operational network interface**. The vendor calls
+  this VLAN/interface WAN, but physically and functionally it connects to the
+  owner's existing LAN. OpenWrt's logical network is named `wan` only to match
+  the vendor-derived firewall/configuration references; that label does not
+  mean the device is intended to be used as an Internet-edge router.
+- The `wan` logical interface binds to `eth0.2`, uses DHCP, and accepts its
+  address, gateway, and DNS from the owner's existing network. No static
+  management address is embedded.
+- `eth0.1` is the vendor-labeled LAN VLAN and is **not** a management or
+  service interface in this project. It has no OpenWrt Layer-3 interface,
+  address, DHCP server, bridge, or default route. The captured switch VLAN
+  membership is retained pending physical-port verification; VLAN membership
+  alone does not create an IP interface.
 - Switch map retained from the captured vendor configuration: VLAN 1 ports
-  1-4 plus CPU port 6 tagged; VLAN 2 port 0 plus CPU port 6 tagged.
-- The LAN-side switch group remains `eth0.1`, with an isolated maintenance
-  address `192.168.88.1/24`. No physical-port labels are inferred beyond the
-  captured VLAN membership.
-- The new image defaults the WAN VLAN to DHCP, per the owner's clarification;
-  it does not copy the old static `10.10.50.253` address. DNS is accepted from
-  the upstream DHCP lease, not hard-coded.
+  1-4 plus CPU port 6 tagged; VLAN 2 port 0 plus CPU port 6 tagged. These are
+  hardware switch VLAN definitions, not a statement that both VLANs are used
+  for IP networking.
 - OpenWrt's standard firewall defaults are retained; a first-boot UCI-defaults
   script adds only UDP/123 from the WAN zone so upstream LAN NTP clients can
   query Chrony. This does not alter the running vendor device.
@@ -35,8 +42,12 @@ and the package/LuCI feed commits recorded in the official 25.12.6
   or baud-rate changes are performed.
 - PPS is GPIO11 active-high. GPS/PPS Chrony refclocks remain `noselect` until
   UTC-second association is verified.
-- DS1307 RTC is at I2C `0x68`. SH1106 retains the exact vendor compatible
-  `wealth,sh1106`; display-driver binding remains a separate validation item.
+- DS1307 RTC is at I2C `0x68`. The display is a 240x320 ST7789 SPI TFT, not
+  an SH1106 I2C OLED. The checked-in DTS and prior compiled DTB still contain
+  a stale SH1106 node; ST7789 SPI chip-select and control GPIO wiring must be
+  reconciled before the display driver can safely be enabled. The current
+  candidate image must therefore be treated as a bring-up baseline, not a
+  display-complete release.
 
 ## Why the image is RAM-boot-only
 
@@ -91,7 +102,8 @@ reviewed:
 - Confirm that the TFTP load address does not overlap the decompression or
   initramfs destination in 128 MiB RAM.
 - Confirm UART1/UART2, GPIO11 PPS, DS1307, Ethernet/switch and VLANs on the
-  compiled DTB.
+  compiled DTB. Confirm the ST7789's actual SPI CS, D/C, reset, and backlight
+  wiring before enabling its device-tree node or framebuffer driver.
 - Confirm the factory MAC NVMEM cell uses offset `0x2e`, matching the captured
   WAN MAC `60:70:72:59:22:0b`; offset `0x28` contains the adjacent `...:0a`.
 - Verify GPSD is configured for `/dev/ttyS1` at its existing 9600-baud host
@@ -102,3 +114,28 @@ reviewed:
 No command in this project writes to the YSPEED device. No U-Boot, environment,
 factory, or firmware MTD partition is modified. A later persistent-flash image
 requires a separate review and explicit owner approval.
+
+
+## Network contract (do not reinterpret vendor labels)
+
+The network contract is intentionally unambiguous:
+
+- **Use `eth0.2` only** for device access on the owner's network.
+- The interface obtains its IPv4 address and DNS by DHCP.
+- The OpenWrt UCI network name remains `wan` for compatibility with the
+  existing firewall rules. This is a logical label, not a physical topology
+  description.
+- Do not create an `eth0.1` Layer-3 interface, static address, DHCP server,
+  bridge, or fallback management network.
+- Do not change the switch VLAN port map without confirming the physical
+  connector-to-switch-port mapping.
+
+## Display status
+
+The ST7789 driver source exists in the captured Linux 6.12.112 tree, but the
+project does not yet have a verified board-level ST7789 device-tree binding or
+an OpenWrt kernel package selection for it. The stale SH1106 node must not be
+mistaken for working display support. This is an explicit hardware-integration
+gate, not a reason to guess GPIO assignments. The display is not considered
+supported until the actual D/C, reset, backlight, and CS wiring is confirmed
+and the resulting kernel driver is present in the built image.
