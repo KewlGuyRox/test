@@ -33,6 +33,7 @@ sh "$PROJECT_DIR/scripts/disable-wireless-defaults.sh" "$SRC"
 KERNEL_CONFIG="$SRC/target/linux/ramips/mt76x8/config-6.12"
 for entry in \
   'CONFIG_GPIOLIB=y' \
+  'CONFIG_SPI_BITBANG=y' \
   'CONFIG_FB=y' \
   'CONFIG_FB_DEVICE=y' \
   'CONFIG_FB_DEFERRED_IO=y' \
