@@ -13,7 +13,25 @@ for x in git make gcc g++ python3 rsync file sha256sum; do need "$x"; done
 
 if [[ ! -d "$SRC/.git" ]]; then
   mkdir -p "$WORKDIR"
+  # The Actions cache restores OpenWrt's download cache at "$SRC/dl".
+  # Git refuses to clone into that non-empty directory, so temporarily
+  # move the cached downloads aside, clone the clean source tree, then
+  # put the cache back where OpenWrt expects it.
+  CACHED_DL="$WORKDIR/.cached-openwrt-dl"
+  if [[ -d "$SRC/dl" ]]; then
+    rm -rf "$CACHED_DL"
+    mv "$SRC/dl" "$CACHED_DL"
+  fi
+  if [[ -d "$SRC" ]]; then
+    rmdir "$SRC" 2>/dev/null || {
+      echo "Unexpected non-cache files in source directory without .git: $SRC" >&2
+      exit 2
+    }
+  fi
   git clone --branch "$TAG" --depth 1 "$REPO" "$SRC"
+  if [[ -d "$CACHED_DL" ]]; then
+    mv "$CACHED_DL" "$SRC/dl"
+  fi
 fi
 
 git -C "$SRC" fetch --tags --depth 1 origin "$TAG"
