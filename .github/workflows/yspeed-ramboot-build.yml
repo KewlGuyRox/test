@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 # Keep only the newest build for this branch. A newer commit supersedes
 # any in-flight or queued build of an older source revision.
@@ -19,7 +20,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  supersede:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Cancel older queued and running builds for this branch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const branch = context.ref.replace(/^refs\\/heads\\//, '');
+            const { data } = await github.rest.actions.listWorkflowRunsForRepo({ owner, repo, branch, per_page: 100 });
+            const obsolete = data.workflow_runs.filter(run =>
+              run.id !== context.runId && ['queued', 'in_progress', 'waiting', 'requested'].includes(run.status)
+            );
+            for (const run of obsolete) {
+              core.info(`Cancelling superseded run ${run.id} (${run.head_sha}) in state ${run.status}`);
+              await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id });
+            }
+
   build:
+    needs: supersede
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
