@@ -34,6 +34,24 @@ cp "$PROJECT_DIR/board/mt7628an_yspeed_ys-gps-12832.dts" \
 
 cp "$PROJECT_DIR/config/ramips-mt76x8-yspeed.config" "$SRC/.config"
 cp -a "$PROJECT_DIR/files/." "$SRC/files/"
+
+# Enforce the owner's network contract before resolving the OpenWrt config:
+# eth0.2 is the only Layer-3 interface and receives its address via DHCP.
+NETWORK_CONFIG="$PROJECT_DIR/files/etc/config/network"
+grep -qE "option device ['\\"]eth0\\.2['\\"]" "$NETWORK_CONFIG" || {
+  echo "Network contract violation: eth0.2 is not configured" >&2; exit 4;
+}
+grep -qE "option proto ['\\"]dhcp['\\"]" "$NETWORK_CONFIG" || {
+  echo "Network contract violation: eth0.2 must use DHCP" >&2; exit 4;
+}
+if grep -Eq "option (device|ifname) ['\\"]eth0\\.1['\\"]|option ipaddr" "$NETWORK_CONFIG"; then
+  echo "Network contract violation: eth0.1/static Layer-3 configuration detected" >&2
+  exit 4
+fi
+if grep -Eq "option interface ['\\"]lan['\\"]|config interface ['\\"]lan['\\"]" "$NETWORK_CONFIG"; then
+  echo "Network contract violation: unexpected LAN interface stanza" >&2
+  exit 4
+fi
 make -C "$SRC" defconfig
 
 # Hard guard: this project must not produce a flash/sysupgrade/factory image.
