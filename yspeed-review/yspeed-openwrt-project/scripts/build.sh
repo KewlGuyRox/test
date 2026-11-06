@@ -62,21 +62,24 @@ cp -a "$PROJECT_DIR/files/." "$SRC/files/"
 # Enforce the owner's network contract before resolving the OpenWrt config:
 # eth0.2 is the only Layer-3 interface and receives its address via DHCP.
 NETWORK_CONFIG="$PROJECT_DIR/files/etc/config/network"
-# Match either UCI quote style without fragile nested shell/ERE escaping.
-grep -Eq "option device [\x27\x22]eth0[.]2[\x27\x22]" "$NETWORK_CONFIG" || {
-  echo "Network contract violation: eth0.2 is not configured" >&2; exit 4;
+# Verify the WAN logical interface maps to eth0.2 and uses DHCP. Ignore the
+# loopback interface's required 127.0.0.1 static address.
+awk '
+function uq(v) { gsub(/^["\047]|["\047]$/, "", v); return v }
+/^config / { section=$2; name=uq($3); next }
+section == "interface" && name == "wan" && $1 == "option" {
+  if ($2 == "device" && uq($3) == "eth0.2") device_ok=1
+  if ($2 == "proto" && uq($3) == "dhcp") proto_ok=1
 }
-grep -Eq "option proto [\x27\x22]dhcp[\x27\x22]" "$NETWORK_CONFIG" || {
-  echo "Network contract violation: eth0.2 must use DHCP" >&2; exit 4;
+section == "interface" && name == "lan" { bad=1 }
+section == "interface" && name != "loopback" && $1 == "option" && $2 == "ipaddr" { bad=1 }
+section == "interface" && name != "loopback" && $1 == "option" &&
+  ($2 == "device" || $2 == "ifname") && uq($3) == "eth0.1" { bad=1 }
+END { if (!device_ok || !proto_ok || bad) exit 1 }
+' "$NETWORK_CONFIG" || {
+  echo "Network contract violation: require DHCP on eth0.2 only; no eth0.1 or other static L3 interface" >&2
+  exit 4
 }
-if grep -Eq "option (device|ifname) [\x27\x22]eth0[.]1[\x27\x22]|option ipaddr" "$NETWORK_CONFIG"; then
-  echo "Network contract violation: eth0.1/static Layer-3 configuration detected" >&2
-  exit 4
-fi
-if grep -Eq "option interface [\x27\x22]lan[\x27\x22]|config interface [\x27\x22]lan[\x27\x22]" "$NETWORK_CONFIG"; then
-  echo "Network contract violation: unexpected LAN interface stanza" >&2
-  exit 4
-fi
 make -C "$SRC" defconfig
 
 # Hard guard: this project must not produce a flash/sysupgrade/factory image.
