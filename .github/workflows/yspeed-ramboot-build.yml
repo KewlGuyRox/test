@@ -28,7 +28,7 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            const branch = context.ref.replace(/^refs\\/heads\\//, '');
+            const branch = context.ref.split('/').slice(2).join('/');
             const { data } = await github.rest.actions.listWorkflowRunsForRepo({ owner, repo, branch, per_page: 100 });
             const obsolete = data.workflow_runs.filter(run =>
               run.id !== context.runId && ['queued', 'in_progress', 'waiting', 'requested'].includes(run.status)
