@@ -27,6 +27,29 @@ cp "$PROJECT_DIR/board/mt7628an_yspeed_ys-gps-12832.dts" \
 "$PROJECT_DIR/scripts/append-profile.sh" "$SRC"
 "$PROJECT_DIR/scripts/disable-wireless-defaults.sh" "$SRC"
 
+# Add the ST7789V FBTFT kernel package absent from the upstream OpenWrt
+# package catalogue. Its source is present in the pinned Linux 6.12 tree.
+VIDEO_MK="$SRC/package/kernel/linux/modules/video.mk"
+if ! grep -qF 'KernelPackage/fb-tft-st7789v' "$VIDEO_MK"; then
+cat >> "$VIDEO_MK" <<'ST7789_PACKAGE'
+
+define KernelPackage/fb-tft-st7789v
+  SUBMENU:=$(VIDEO_MENU)
+  TITLE:=FB driver for the Sitronix ST7789V LCD controller
+  DEPENDS:=+kmod-fb-tft
+  KCONFIG:=CONFIG_FB_TFT_ST7789V
+  FILES:=$(LINUX_DIR)/drivers/staging/fbtft/fb_st7789v.ko
+  AUTOLOAD:=$(call AutoLoad,09,fb_st7789v)
+endef
+
+define KernelPackage/fb-tft-st7789v/description
+  Framebuffer driver for the ribbon-connected 240x320 ST7789V panel.
+endef
+
+$(eval $(call KernelPackage,fb-tft-st7789v))
+ST7789_PACKAGE
+fi
+
 # Pin feed revisions using the official 25.12.6 feeds.buildinfo snapshot.
 (cd "$SRC" && ./scripts/feeds update packages luci && \
  ./scripts/feeds install -p packages gpsd gpsd-clients chrony && \
@@ -38,17 +61,18 @@ cp -a "$PROJECT_DIR/files/." "$SRC/files/"
 # Enforce the owner's network contract before resolving the OpenWrt config:
 # eth0.2 is the only Layer-3 interface and receives its address via DHCP.
 NETWORK_CONFIG="$PROJECT_DIR/files/etc/config/network"
-grep -qE "option device ['\\"]eth0\\.2['\\"]" "$NETWORK_CONFIG" || {
+# Match either UCI quote style without fragile nested shell/ERE escaping.
+grep -Eq "option device [\x27\x22]eth0[.]2[\x27\x22]" "$NETWORK_CONFIG" || {
   echo "Network contract violation: eth0.2 is not configured" >&2; exit 4;
 }
-grep -qE "option proto ['\\"]dhcp['\\"]" "$NETWORK_CONFIG" || {
+grep -Eq "option proto [\x27\x22]dhcp[\x27\x22]" "$NETWORK_CONFIG" || {
   echo "Network contract violation: eth0.2 must use DHCP" >&2; exit 4;
 }
-if grep -Eq "option (device|ifname) ['\\"]eth0\\.1['\\"]|option ipaddr" "$NETWORK_CONFIG"; then
+if grep -Eq "option (device|ifname) [\x27\x22]eth0[.]1[\x27\x22]|option ipaddr" "$NETWORK_CONFIG"; then
   echo "Network contract violation: eth0.1/static Layer-3 configuration detected" >&2
   exit 4
 fi
-if grep -Eq "option interface ['\\"]lan['\\"]|config interface ['\\"]lan['\\"]" "$NETWORK_CONFIG"; then
+if grep -Eq "option interface [\x27\x22]lan[\x27\x22]|config interface [\x27\x22]lan[\x27\x22]" "$NETWORK_CONFIG"; then
   echo "Network contract violation: unexpected LAN interface stanza" >&2
   exit 4
 fi
