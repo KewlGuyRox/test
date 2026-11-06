@@ -5,7 +5,7 @@
  *
  * Verified from vendor DTB / flash backup:
  *   MT7628AN; UART0 console 57600; UART1 GNSS; UART2 front-panel serial;
- *   PPS GPIO11 active-high; DS1307 @ 0x68; SH1106 @ 0x3c;
+ *   PPS GPIO11 active-high; DS1307 @ 0x68; 240x320 ST7789 SPI TFT.
  *   W25Q256 32 MiB; firmware partition starts 0x50000 and is 0x1fb0000 bytes;
  *   switch0 VLAN1 ports 1-4 + CPU6 tagged; VLAN2 port0 + CPU6 tagged.
  *
@@ -89,13 +89,6 @@
                 status = "okay";
         };
 
-        /* Preserve the exact vendor compatible until a mainline binding or
-         * compatibility driver is selected and verified. */
-        oled@3c {
-                compatible = "wealth,sh1106";
-                reg = <0x3c>;
-                status = "okay";
-        };
 };
 
 &spi0 {
