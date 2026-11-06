@@ -28,26 +28,60 @@ cp -a "$PROJECT_DIR/package/yspeed-display" "$SRC/package/"
 sh "$PROJECT_DIR/scripts/append-profile.sh" "$SRC"
 sh "$PROJECT_DIR/scripts/disable-wireless-defaults.sh" "$SRC"
 
-# Add the ST7789V FBTFT kernel package absent from the upstream OpenWrt
-# package catalogue. Its source is present in the pinned Linux 6.12 tree.
+# Build the framebuffer core and ST7789V modules without the generic
+# kmod-fb package's @DISPLAY_SUPPORT dependency (not enabled by mt76x8).
+KERNEL_CONFIG="$SRC/target/linux/ramips/mt76x8/config-6.12"
+for entry in \
+  'CONFIG_GPIOLIB=y' \
+  'CONFIG_FB=y' \
+  'CONFIG_FB_DEVICE=y' \
+  'CONFIG_FB_DEFERRED_IO=y' \
+  'CONFIG_FB_SYSMEM_FOPS=y' \
+  'CONFIG_FB_SYS_COPYAREA=y' \
+  'CONFIG_FB_SYS_FILLRECT=y' \
+  'CONFIG_FB_SYS_IMAGEBLIT=y' \
+  'CONFIG_BACKLIGHT_CLASS_DEVICE=y' \
+  'CONFIG_FB_BACKLIGHT=y' \
+  'CONFIG_FONTS=y' \
+  'CONFIG_FONT_8x8=y' \
+  'CONFIG_FONT_8x16=y' \
+  'CONFIG_FB_TFT=m' \
+  'CONFIG_FB_TFT_ST7789V=m'; do
+  grep -qxF "$entry" "$KERNEL_CONFIG" || printf '%s\n' "$entry" >> "$KERNEL_CONFIG"
+done
+
 VIDEO_MK="$SRC/package/kernel/linux/modules/video.mk"
-if ! grep -qF 'KernelPackage/fb-tft-st7789v' "$VIDEO_MK"; then
+if ! grep -qF 'KernelPackage/fb-tft-yspeed' "$VIDEO_MK"; then
 cat >> "$VIDEO_MK" <<'ST7789_PACKAGE'
 
-define KernelPackage/fb-tft-st7789v
+define KernelPackage/fb-tft-yspeed
+  SUBMENU:=$(VIDEO_MENU)
+  TITLE:=FBTFT core for YSPEED ST7789 panel
+  KCONFIG:=CONFIG_FB_TFT
+  FILES:=$(LINUX_DIR)/drivers/staging/fbtft/fbtft.ko
+  AUTOLOAD:=$(call AutoLoad,08,fbtft)
+endef
+
+define KernelPackage/fb-tft-yspeed/description
+  Framebuffer core for the YSPEED ribbon-connected ST7789V panel.
+endef
+
+$(eval $(call KernelPackage,fb-tft-yspeed))
+
+define KernelPackage/fb-tft-st7789v-yspeed
   SUBMENU:=$(VIDEO_MENU)
   TITLE:=FB driver for the Sitronix ST7789V LCD controller
-  DEPENDS:=+kmod-fb-tft
+  DEPENDS:=+kmod-fb-tft-yspeed
   KCONFIG:=CONFIG_FB_TFT_ST7789V
   FILES:=$(LINUX_DIR)/drivers/staging/fbtft/fb_st7789v.ko
   AUTOLOAD:=$(call AutoLoad,09,fb_st7789v)
 endef
 
-define KernelPackage/fb-tft-st7789v/description
+define KernelPackage/fb-tft-st7789v-yspeed/description
   Framebuffer driver for the ribbon-connected 240x320 ST7789V panel.
 endef
 
-$(eval $(call KernelPackage,fb-tft-st7789v))
+$(eval $(call KernelPackage,fb-tft-st7789v-yspeed))
 ST7789_PACKAGE
 fi
 
@@ -89,7 +123,7 @@ fi
 if ! grep -q '^CONFIG_TARGET_DEVICE_ramips_mt76x8_DEVICE_yspeed_ys-gps-12832=y$' "$SRC/.config"; then
   echo "YSPEED profile is not selected in .config" >&2; exit 4
 fi
-for package in kmod-fb-tft kmod-fb-tft-st7789v yspeed-display; do
+for package in kmod-fb-tft-yspeed kmod-fb-tft-st7789v-yspeed yspeed-display dropbear uhttpd; do
   if ! grep -q "^CONFIG_PACKAGE_${package}=y$" "$SRC/.config"; then
     echo "Required ST7789/display package was dropped by defconfig: $package" >&2
     exit 4
