@@ -120,7 +120,7 @@ config rule
 
 config rule
         option name 'Allow-NTP'
-        option src '*'
+        option src 'wan'
         option dest_port '123'
         option proto 'udp'
         option target 'ACCEPT'
