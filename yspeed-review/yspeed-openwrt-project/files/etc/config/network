@@ -1,0 +1,36 @@
+config interface 'loopback'
+        option device 'lo'
+        option proto 'static'
+        option ipaddr '127.0.0.1'
+        option netmask '255.0.0.0'
+
+config globals 'globals'
+        option ula_prefix 'auto'
+
+config device
+        option name 'eth0.2'
+        option macaddr '60:70:72:59:22:0b'
+
+config interface 'wan'
+        option device 'eth0.2'
+        option proto 'dhcp'
+        option peerdns '1'
+
+config interface 'wan6'
+        option device '@wan'
+        option proto 'dhcpv6'
+
+config switch
+        option name 'switch0'
+        option reset '1'
+        option enable_vlan '1'
+
+config switch_vlan
+        option device 'switch0'
+        option vlan '1'
+        option ports '1 2 3 4 6t'
+
+config switch_vlan
+        option device 'switch0'
+        option vlan '2'
+        option ports '0 6t'
