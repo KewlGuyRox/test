@@ -35,4 +35,15 @@ define Package/yspeed-display/install
 	$(INSTALL_BIN) ./files/yspeed-display.init $(1)/etc/init.d/yspeed-display
 endef
 
+define Package/yspeed-display/postinst
+#!/bin/sh
+if [ -n "${IPKG_INSTROOT}" ]; then
+	mkdir -p "${IPKG_INSTROOT}/etc/rc.d"
+	ln -sf ../init.d/yspeed-display "${IPKG_INSTROOT}/etc/rc.d/S95yspeed-display"
+else
+	/etc/init.d/yspeed-display enable
+fi
+exit 0
+endef
+
 $(eval $(call BuildPackage,yspeed-display))
