@@ -86,7 +86,15 @@ make -C "$SRC" defconfig
 if ! grep -q '^CONFIG_TARGET_ROOTFS_INITRAMFS=y$' "$SRC/.config"; then
   echo "INITRAMFS configuration did not survive defconfig" >&2; exit 4
 fi
-if ! grep -q '^CONFIG_TARGET_DEVICE_ramips_mt76x8_DEVICE_yspeed_ys-gps-12832=y
+if ! grep -q '^CONFIG_TARGET_DEVICE_ramips_mt76x8_DEVICE_yspeed_ys-gps-12832=y$' "$SRC/.config"; then
+  echo "YSPEED profile is not selected in .config" >&2; exit 4
+fi
+for package in kmod-fb-tft kmod-fb-tft-st7789v yspeed-display; do
+  if ! grep -q "^CONFIG_PACKAGE_${package}=y$" "$SRC/.config"; then
+    echo "Required ST7789/display package was dropped by defconfig: $package" >&2
+    exit 4
+  fi
+done
 if grep -Eq '^CONFIG_PACKAGE_(wpad[^=]*|iw|kmod-mt7603(e)?|kmod-mac80211|kmod-mt76-core|wireless-regdb)=(y|m)$' "$SRC/.config"; then
   echo "Wireless package selected in wired-only build config" >&2
   grep -E '^CONFIG_PACKAGE_(wpad[^=]*|iw|kmod-mt7603(e)?|kmod-mac80211|kmod-mt76-core|wireless-regdb)=(y|m)$' "$SRC/.config" >&2 || true
