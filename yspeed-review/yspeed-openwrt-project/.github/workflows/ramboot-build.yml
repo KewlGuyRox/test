@@ -39,6 +39,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: yspeed-ramboot-openwrt-25.12.6
-          path: \${{ runner.temp }}/yspeed-openwrt-25.12.6/artifacts/
+          path: ${{ runner.temp }}/yspeed-openwrt-25.12.6/artifacts/
           if-no-files-found: warn
           retention-days: 30
