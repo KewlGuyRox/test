@@ -111,6 +111,8 @@ fi
 
 cp "$PROJECT_DIR/config/ramips-mt76x8-yspeed.config" "$SRC/.config"
 cp -a "$PROJECT_DIR/files/." "$SRC/files/"
+# UCI defaults must be executable in the image.
+find "$SRC/files/etc/uci-defaults" -type f -exec chmod 0755 {} + 2>/dev/null || true
 
 # Enforce the owner's network contract before resolving the OpenWrt config:
 # eth0.2 is the only Layer-3 interface and receives its address via DHCP.
