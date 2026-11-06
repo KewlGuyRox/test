@@ -18,6 +18,11 @@ define Package/yspeed-display/description
   Shows local time, eth0.2 DHCP address, and GPSD fix status.
 endef
 
+define Build/Prepare
+	mkdir -p $(PKG_BUILD_DIR)
+	$(CP) ./src/* $(PKG_BUILD_DIR)/
+endef
+
 define Build/Compile
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -Wall -Wextra -O2 \
 		-o $(PKG_BUILD_DIR)/yspeed-display src/yspeed-display.c
