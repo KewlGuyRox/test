@@ -25,7 +25,7 @@ endef
 
 define Build/Compile
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -Wall -Wextra -O2 \
-		-o $(PKG_BUILD_DIR)/yspeed-display src/yspeed-display.c
+		-o $(PKG_BUILD_DIR)/yspeed-display $(PKG_BUILD_DIR)/yspeed-display.c
 endef
 
 define Package/yspeed-display/install
