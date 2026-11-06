@@ -88,12 +88,10 @@ fi
 
 # Pin feed revisions using the official 25.12.6 feeds.buildinfo snapshot.
 (cd "$SRC" && ./scripts/feeds update packages luci && \
- ./scripts/feeds install -p packages gpsd gpsd-clients chrony && \
+ ./scripts/feeds install -p packages gpsd chrony && \
  ./scripts/feeds install -p luci luci-light luci-mod-network luci-mod-status luci-mod-system luci-ssl luci-theme-bootstrap)
 
 cp "$PROJECT_DIR/config/ramips-mt76x8-yspeed.config" "$SRC/.config"
-# Use the hosted runner's persistent ccache directory for repeatable builds.
-grep -qxF 'CONFIG_CCACHE=y' "$SRC/.config" || printf '%s\n' 'CONFIG_CCACHE=y' >> "$SRC/.config"
 cp -a "$PROJECT_DIR/files/." "$SRC/files/"
 
 # Enforce the owner's network contract before resolving the OpenWrt config:
@@ -125,9 +123,6 @@ if ! grep -q '^CONFIG_TARGET_ROOTFS_INITRAMFS=y$' "$SRC/.config"; then
 fi
 if ! grep -q '^CONFIG_TARGET_DEVICE_ramips_mt76x8_DEVICE_yspeed_ys-gps-12832=y$' "$SRC/.config"; then
   echo "YSPEED profile is not selected in .config" >&2; exit 4
-fi
-if ! grep -q '^CONFIG_CCACHE=y$' "$SRC/.config"; then
-  echo "Compiler cache support was dropped by defconfig" >&2; exit 4
 fi
 for package in kmod-fb-tft-yspeed kmod-fb-tft-st7789v-yspeed yspeed-display kmod-gpio-button-hotplug dropbear uhttpd; do
   if ! grep -q "^CONFIG_PACKAGE_${package}=y$" "$SRC/.config"; then
