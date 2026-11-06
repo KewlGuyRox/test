@@ -11,7 +11,7 @@ define Package/yspeed-display
   SECTION:=utils
   CATEGORY:=Utilities
   TITLE:=YSPEED ST7789 GNSS status display
-  DEPENDS:=+gpsd-clients +kmod-fb-tft-st7789v
+  DEPENDS:=+gpsd-clients +kmod-fb-tft-st7789v-yspeed
 endef
 
 define Package/yspeed-display/description
