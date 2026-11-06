@@ -45,8 +45,10 @@ jobs:
             yspeed-openwrt-${{ runner.os }}-25.12.6-
 
       - name: Configure compiler cache
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/ccache
         run: |
-          mkdir -p "$HOME/.cache/ccache"
+          mkdir -p "$CCACHE_DIR"
           ccache --set-config=max_size=5G
           ccache --zero-stats
 
