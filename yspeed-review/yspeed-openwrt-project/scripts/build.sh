@@ -93,7 +93,7 @@ fi
 
 cp "$PROJECT_DIR/config/ramips-mt76x8-yspeed.config" "$SRC/.config"
 # Use the hosted runner's persistent ccache directory for repeatable builds.
-grep -qxF 'CONFIG_CCACHE=y' "$SRC/.config" || printf '%s\\n' 'CONFIG_CCACHE=y' >> "$SRC/.config"
+grep -qxF 'CONFIG_CCACHE=y' "$SRC/.config" || printf '%s\n' 'CONFIG_CCACHE=y' >> "$SRC/.config"
 cp -a "$PROJECT_DIR/files/." "$SRC/files/"
 
 # Enforce the owner's network contract before resolving the OpenWrt config:
