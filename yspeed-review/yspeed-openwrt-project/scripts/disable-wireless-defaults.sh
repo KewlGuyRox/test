@@ -20,6 +20,18 @@ else
     exit 3
 fi
 
+
+# The MT7628AN board has GPIO and SPI-attached display hardware. Advertise
+# those target capabilities so the framebuffer/backlight kernel packages,
+# whose OpenWrt dependencies are @GPIO_SUPPORT and @DISPLAY_SUPPORT, can be
+# selected by the YSPEED profile.
+if ! grep -Eq '^FEATURES.*(^|[[:space:]])gpio([[:space:]]|$)' "$TARGET_MK"; then
+    printf '%s\\n' 'FEATURES += gpio' >> "$TARGET_MK"
+fi
+if ! grep -Eq '^FEATURES.*(^|[[:space:]])display([[:space:]]|$)' "$TARGET_MK"; then
+    printf '%s\\n' 'FEATURES += display' >> "$TARGET_MK"
+fi
+
 if grep -Eq '^[[:space:]]*DEFAULT_PACKAGES.*(kmod-mt7603|wpad)' "$TARGET_MK"; then
     echo "Wireless default remains in MT76x8 target configuration" >&2
     exit 4
