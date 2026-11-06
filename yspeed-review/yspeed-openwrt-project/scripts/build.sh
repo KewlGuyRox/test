@@ -24,6 +24,7 @@ ACTUAL_TAG="$(git -C "$SRC" describe --tags --exact-match HEAD)"
 cp "$PROJECT_DIR/feeds.conf" "$SRC/feeds.conf"
 cp "$PROJECT_DIR/board/mt7628an_yspeed_ys-gps-12832.dts" \
    "$SRC/target/linux/ramips/dts/mt7628an_yspeed_ys-gps-12832.dts"
+cp -a "$PROJECT_DIR/package/yspeed-display" "$SRC/package/"
 "$PROJECT_DIR/scripts/append-profile.sh" "$SRC"
 "$PROJECT_DIR/scripts/disable-wireless-defaults.sh" "$SRC"
 
