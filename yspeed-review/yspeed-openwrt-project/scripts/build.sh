@@ -112,7 +112,7 @@ fi
 cp "$PROJECT_DIR/config/ramips-mt76x8-yspeed.config" "$SRC/.config"
 cp -a "$PROJECT_DIR/files/." "$SRC/files/"
 # Executable first-boot scripts, local telemetry helpers and CGI endpoint.
-for dir in "$SRC/files/etc/uci-defaults" "$SRC/files/usr/sbin" "$SRC/files/www/cgi-bin"; do
+for dir in "$SRC/files/etc/uci-defaults" "$SRC/files/etc/hotplug.d/iface" "$SRC/files/usr/sbin" "$SRC/files/www/cgi-bin"; do
   [ ! -d "$dir" ] || find "$dir" -type f -exec chmod 0755 {} + 2>/dev/null || true
 done
 
