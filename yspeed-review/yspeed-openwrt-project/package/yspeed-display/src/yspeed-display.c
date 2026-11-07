@@ -88,6 +88,44 @@ static void text(struct screen *s, int x, int y, const char *str, int scale, uin
                 rect(s, x+col*scale, y+row*scale, scale, scale, fg);
     }
 }
+
+static int json_string_value(const char *json, const char *key, char *out, size_t n) {
+    char needle[48];
+    snprintf(needle, sizeof(needle), "\\"%s\\":", key);
+    const char *p = strstr(json, needle);
+    if (!p) return 0;
+    p += strlen(needle);
+    if (*p != '"') return 0;
+    p++;
+    size_t i = 0;
+    while (*p && *p != '"' && i + 1 < n) {
+        if (*p == '\\\\' && p[1]) p++;
+        out[i++] = *p++;
+    }
+    out[i] = '\\0';
+    return i > 0;
+}
+static void get_shared_status(char *fix, size_t fixn, char *utc, size_t utcn,
+                              char *ntp, size_t ntpn, char *ref, size_t refn,
+                              char *ip, size_t ipn) {
+    snprintf(fix, fixn, "NO TELEMETRY");
+    snprintf(utc, utcn, "UNAVAILABLE");
+    snprintf(ntp, ntpn, "UNAVAILABLE");
+    snprintf(ref, refn, "NONE");
+    snprintf(ip, ipn, "NO ADDRESS");
+    FILE *f = popen("/usr/sbin/yspeed-status 2>/dev/null", "r");
+    if (!f) return;
+    char json[8192];
+    size_t used = fread(json, 1, sizeof(json) - 1, f);
+    json[used] = '\\0';
+    pclose(f);
+    json_string_value(json, "fix", fix, fixn);
+    json_string_value(json, "utc", utc, utcn);
+    json_string_value(json, "state", ntp, ntpn);
+    json_string_value(json, "reference", ref, refn);
+    json_string_value(json, "ipv4", ip, ipn);
+}
+
 static void get_ip(char *out, size_t n) {
     struct ifaddrs *all = NULL;
     snprintf(out,n,"NO DHCP ADDRESS");
@@ -144,21 +182,26 @@ int main(void) {
     if(s.mem==MAP_FAILED){perror("mmap");return 1;}
     uint32_t bg=rgb(7,18,32,&s.var), panel=rgb(15,39,59,&s.var), white=rgb(238,245,250,&s.var), accent=rgb(20,190,170,&s.var), muted=rgb(140,170,190,&s.var);
     for(;;) {
-        char ip[64],gps[96],line[64];
+        char ip[64],fix[20],utc[64],ntp[32],ref[32],line[64],utc_short[24];
         time_t now=time(NULL); struct tm tmv; localtime_r(&now,&tmv);
-        get_ip(ip,sizeof(ip)); get_gps(gps,sizeof(gps));
+        get_shared_status(fix,sizeof(fix),utc,sizeof(utc),ntp,sizeof(ntp),ref,sizeof(ref),ip,sizeof(ip));
+        snprintf(utc_short,sizeof(utc_short),"%.19s",utc);
         rect(&s,0,0,s.var.xres,s.var.yres,bg);
         rect(&s,0,0,s.var.xres,42,panel);
-        text(&s,12,12,"YSPEED GNSS",2,accent);
-        text(&s,12,58,"LOCAL TIME",1,muted);
-        strftime(line,sizeof(line),"%H:%M:%S",&tmv); text(&s,12,78,line,3,white);
-        strftime(line,sizeof(line),"%Y-%m-%d",&tmv); text(&s,12,112,line,2,white);
-        rect(&s,10,155,s.var.xres-20,2,accent);
-        text(&s,12,170,"NETWORK ETH0.2",1,muted);
-        text(&s,12,190,ip,1,white);
-        text(&s,12,225,"GNSS STATUS",1,muted);
-        text(&s,12,245,gps,1,white);
-        text(&s,12,285,"NTP CHRONY",1,accent);
+        text(&s,12,12,"YSPEED GNSS NTP",2,accent);
+        text(&s,12,52,"LOCAL SYSTEM TIME",1,muted);
+        strftime(line,sizeof(line),"%H:%M:%S",&tmv); text(&s,12,70,line,3,white);
+        strftime(line,sizeof(line),"%Y-%m-%d",&tmv); text(&s,12,104,line,2,white);
+        rect(&s,10,137,s.var.xres-20,2,accent);
+        text(&s,12,147,"ETHERNET",1,muted);
+        text(&s,12,163,ip,1,white);
+        text(&s,12,185,"GNSS FIX",1,muted);
+        text(&s,12,201,fix,2,white);
+        text(&s,12,228,"RECEIVER UTC",1,muted);
+        text(&s,12,244,utc_short,1,white);
+        text(&s,12,267,"CHRONY",1,accent);
+        text(&s,12,283,ntp,1,white);
+        text(&s,12,300,ref,1,muted);
         usleep(2000000);
     }
     return 0;
