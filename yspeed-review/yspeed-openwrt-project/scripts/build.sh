@@ -38,18 +38,39 @@ done
 
 # DHCP on eth0.2 only; no static management address or eth0.1 L3 interface.
 NETWORK_CONFIG="$PROJECT_DIR/files/etc/config/network"
-awk '
-function uq(v) { gsub(/^[\"\\047]|[\"\\047]$/, \"\", v); return v }
-/^config / { section=$2; name=uq($3); next }
-section == "interface" && name == "wan" && $1 == "option" {
-  if ($2 == "device" && uq($3) == "eth0.2") device_ok=1
-  if ($2 == "proto" && uq($3) == "dhcp") proto_ok=1
-}
-section == "interface" && name == "lan" { bad=1 }
-section == "interface" && name != "loopback" && $1 == "option" && $2 == "ipaddr" { bad=1 }
-section == "interface" && name != "loopback" && $1 == "option" && ($2 == "device" || $2 == "ifname") && uq($3) == "eth0.1" { bad=1 }
-END { if (!device_ok || !proto_ok || bad) exit 1 }
-' "$NETWORK_CONFIG" || { echo "Network contract violation: DHCP on eth0.2 only" >&2; exit 4; }
+python3 - "$NETWORK_CONFIG" <<'PYNET'
+import shlex, sys
+path=sys.argv[1]
+sections=[]
+current=None
+for number, raw in enumerate(open(path, encoding="utf-8"), 1):
+    try:
+        fields=shlex.split(raw, comments=True)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid UCI syntax at {path}:{number}: {exc}")
+    if not fields:
+        continue
+    if fields[0] == "config":
+        if len(fields) < 2:
+            raise SystemExit(f"Invalid config section at line {number}")
+        current={"type":fields[1], "name":fields[2] if len(fields)>2 else "", "options":{}}
+        sections.append(current)
+    elif fields[0] == "option" and current is not None and len(fields)>=3:
+        current["options"][fields[1]]=fields[2]
+interfaces=[x for x in sections if x["type"]=="interface"]
+wan=[x for x in interfaces if x["name"]=="wan"]
+if len(wan)!=1 or wan[0]["options"].get("device")!="eth0.2" or wan[0]["options"].get("proto")!="dhcp":
+    raise SystemExit("WAN must be DHCP on eth0.2")
+for item in interfaces:
+    name=item["name"]; opts=item["options"]
+    if name=="lan":
+        raise SystemExit("LAN Layer-3 interface must not be configured")
+    if name!="loopback" and "ipaddr" in opts:
+        raise SystemExit(f"Static IPv4 address forbidden on interface {name}")
+    if name!="loopback" and opts.get("device")=="eth0.1":
+        raise SystemExit(f"eth0.1 must not have a Layer-3 interface ({name})")
+print("Network contract OK: only WAN DHCP on eth0.2; no static IPv4 or eth0.1 L3")
+PYNET
 
 make -C "$SRC" defconfig
 make -C "$SRC" target/linux/prepare V=s
