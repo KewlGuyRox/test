@@ -105,12 +105,10 @@ static int gpio_set(int number, int value)
 }
 static int spi_write(struct display *d, const uint8_t *data, size_t len)
 {
-    while(len) {
-        size_t n=len>4096?4096:len;
-        ssize_t w=write(d->spi,data,n);
-        if(w<0) { if(errno==EINTR) continue; return -1; }
-        data+=w; len-=(size_t)w;
-    }
+    ssize_t w;
+    do { w=write(d->spi,data,len); } while(w<0 && errno==EINTR);
+    if(w<0) return -1;
+    if((size_t)w!=len) { errno=EIO; return -1; }
     return 0;
 }
 static int command(struct display *d, uint8_t cmd, const uint8_t *data, size_t len)
@@ -168,17 +166,16 @@ static int flush(struct display *d)
     const uint8_t rows[]={0,0,(uint8_t)((H-1)>>8),(uint8_t)(H-1)};
     if(command(d,0x2a,cols,4)<0 || command(d,0x2b,rows,4)<0 ||
        command(d,0x2c,NULL,0)<0 || gpio_set(d->dc,1)<0) return -1;
-    uint8_t chunk[4096]; size_t total=W*H, pos=0;
-    while(pos<total) {
-        size_t count=total-pos; if(count>sizeof(chunk)/2) count=sizeof(chunk)/2;
-        for(size_t i=0;i<count;i++) {
-            uint16_t p=d->pixels[pos+i];
-            chunk[2*i]=(uint8_t)(p>>8); chunk[2*i+1]=(uint8_t)p;
-        }
-        if(spi_write(d,chunk,count*2)<0) return -1;
-        pos+=count;
+    size_t total=(size_t)W*H;
+    uint8_t *frame=malloc(total*2);
+    if(!frame) return -1;
+    for(size_t i=0;i<total;i++) {
+        frame[2*i]=(uint8_t)(d->pixels[i]>>8);
+        frame[2*i+1]=(uint8_t)d->pixels[i];
     }
-    return 0;
+    int rc=spi_write(d,frame,total*2);
+    free(frame);
+    return rc;
 }
 static void json_value(const char *json,const char *key,char *out,size_t n)
 {
