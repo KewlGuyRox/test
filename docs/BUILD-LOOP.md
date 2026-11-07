@@ -141,3 +141,62 @@ not a fully rolling cache. A properly rolling cache needs a workflow change with
 a `github.run_id` key and prefix restore; that change is written and ready in
 `out/.github/workflows/yspeed-ramboot-build.yml` but requires the `workflow`
 scope to push.
+
+## 2026-11-07: spidev packaging failure and external-review reconciliation
+
+### The exit-5 failure
+
+Build died at 42.9 min with:
+
+```
+Required kernel symbol missing: CONFIG_SPI_SPIDEV
+##[error]Process completed with exit code 5.
+```
+
+Two distinct faults:
+
+1. `build.sh` asserted `CONFIG_SPI_SPIDEV=y`. The kernel resolved it to **`=m`**;
+   the log shows `CC drivers/spi/spidev.o`, so the driver did build. The check
+   failed a healthy kernel.
+2. The consequence of `=m` is the real bug: spidev ships as a module, so
+   `/dev/spidev0.1` does not exist unless **`kmod-spi-dev`** is installed.
+   `DEVICE_PACKAGES` did not include it. The image would have booted with no
+   SPI character device and the LCD could never work.
+
+Fix (`efe068a`): add `kmod-spi-dev` to the profile; make `build.sh` print every
+resolved symbol value before asserting, require builtin only for
+`CONFIG_GPIO_SYSFS` and `CONFIG_SPI_MT7621`, and accept spidev as `y` **or**
+`m` (fatal only if neither).
+
+### Package name, confirmed
+
+```make
+define KernelPackage/spi-dev
+  TITLE:=User mode SPI device driver
+  KCONFIG:=CONFIG_SPI_SPIDEV CONFIG_SPI=y CONFIG_SPI_MASTER=y
+  FILES:=$(LINUX_DIR)/drivers/spi/spidev.ko
+```
+
+`KernelPackage/spi-dev` means the package is **`kmod-spi-dev`**. There is no
+`kmod-spi-spidev` in this release. Do not add that name; the package pre-flight
+check will reject it (and did, in a 3-minute failure earlier).
+
+### External review reconciliation (Claude patch set)
+
+| Claimed | Reality |
+|---|---|
+| Board DTS has no `spidev@1` and still carries `sh1106` | Stale. The DTS has had `st7789@1` with `compatible = "yspeed,st7789-spidev"` for many commits, and no `sh1106`. Its replacement uses `linux,spidev`, which mainline spidev does not match — that is why `build.sh` patches `spidev.c` for a vendor string. Applying it would regress the tree. |
+| Kernel config missing `CONFIG_GPIO_SYSFS` / `CONFIG_SPI_SPIDEV` | Correct class of problem, and it led to the exit-5 bug above. |
+| Add `kmod-spi-spidev` | Wrong name. Correct is `kmod-spi-dev`. |
+| Vendor binary is musl-mipsel-sf; may not run | ABI **is** compatible — the binary's interpreter is `/lib/ld-musl-mipsel-sf.so.1` and this target is also soft-float musl. The real blocker is different (below). |
+| Ship the vendor `st7789_display` binary | Rejected. It hardcodes sysfs GPIO **494/496/499/486**, i.e. the vendor kernel's base-480 numbering. On 6.12 the base is ~0, so the exports fail and the panel stays dark. A "DTS-side gpio-hog remap" cannot fix this: sysfs numbers derive from the gpiochip base, not from a DT property. The in-tree renderer resolves the base at runtime. |
+
+Adopted from that review: the `ys-gps` UCI stub idea. The image currently has no
+`/etc/config/ys-gps` and nothing writes `/etc/lvgl_st7789.conf`; generating that
+file from UCI defaults would match the vendor contract instead of relying on
+compiled defaults.
+
+### Still open for build time
+
+`build.sh` re-runs `scripts/feeds update packages luci` on every build. That is
+minutes per run and has no bearing on correctness.
