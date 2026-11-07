@@ -31,27 +31,38 @@ def read_names(path):
 
 
 def device_packages(src):
-    """Extract the DEVICE_PACKAGES list from the YSPEED device definition."""
+    """Extract the continued DEVICE_PACKAGES assignment from the YSPEED device definition."""
     path = os.path.join(src, PROFILE_REL)
     if not os.path.exists(path):
         sys.exit("FAIL: profile file not found: %s" % path)
 
-    text = open(path, encoding="utf-8", errors="replace").read()
-    start = text.find(DEVICE_MATCH)
-    if start < 0:
+    lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if DEVICE_MATCH in line)
+    except StopIteration:
         sys.exit("FAIL: %s block not found in %s" % (DEVICE_MATCH, PROFILE_REL))
 
-    block = text[start:]
-    match = re.search(r"DEVICE_PACKAGES\s*:?=\s*(.*?)(?:\n\s{2}[A-Z_]+\s*:?=|\nendef)",
-                      block, re.S)
-    if not match:
-        return []
+    assignment = re.compile(r"^\\s*DEVICE_PACKAGES\\s*:?=\\s*(.*)$")
+    for i in range(start, len(lines)):
+        match = assignment.match(lines[i])
+        if not match:
+            continue
+        parts = []
+        value = match.group(1)
+        while True:
+            continued = value.rstrip().endswith("\\")
+            if continued:
+                value = value.rstrip()[:-1]
+            parts.append(value.split("#", 1)[0])
+            if not continued or i + 1 >= len(lines):
+                break
+            i += 1
+            value = lines[i].strip()
+        tokens = " ".join(parts).split()
+        # A leading '-' means "remove this from the defaults"; it need not exist.
+        return [token for token in tokens if not token.startswith("-")]
 
-    joined = match.group(1).replace("\\\n", " ")
-    tokens = [t for t in joined.split() if t and not t.startswith("#")]
-    # A leading '-' means "remove this from the defaults"; it never has to exist.
-    return [t for t in tokens if not t.startswith("-")]
-
+    return []
 
 def main():
     if len(sys.argv) != 2:
