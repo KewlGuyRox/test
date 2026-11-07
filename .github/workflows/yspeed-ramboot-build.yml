@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - yspeed/ramboot-network-and-build-fixes
+      - yspeed/blocker-resolution
     paths:
       - '.github/workflows/yspeed-ramboot-build.yml'
       - 'yspeed-review/yspeed-openwrt-project/**'
