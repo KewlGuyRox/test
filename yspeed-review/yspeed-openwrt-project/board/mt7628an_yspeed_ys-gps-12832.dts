@@ -15,7 +15,7 @@
                 serial2 = &uart2;
         };
 
-        chosen { bootargs = "console=ttyS0,57600"; };
+        chosen { bootargs = "console=ttyS0,57600 spidev.bufsiz=262144"; };
 
         pps-gps {
                 compatible = "pps-gpio";
