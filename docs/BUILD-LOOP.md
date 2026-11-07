@@ -99,14 +99,45 @@ on this target.
 - **`IMAGES :=`** suppresses flashable images. The build fails if a
   `*sysupgrade*` or `*factory*` image appears — that is intentional.
 
-## Speed work outstanding
+## Compiler cache (implemented, no workflow change needed)
 
-`CONFIG_CCACHE=y` plus a cached `~/.ccache` in the workflow would cut repeat
-builds substantially (typically 2–3×). It needs both:
+Rebuilds are cached through OpenWrt's ccache integration. Two constraints shaped
+how it had to be done:
 
-1. `.config`: `CONFIG_CCACHE=y` — a normal repo change, no special rights.
-2. `.github/workflows/yspeed-ramboot-build.yml`: cache the ccache directory and
-   export `CCACHE_DIR` — this needs the `workflow` scope.
+1. **OpenWrt overrides `CCACHE_DIR`.** `rules.mk` sets
 
-Do both in one change; part 1 alone gains nothing because the cache directory
-does not survive between runners.
+   ```make
+   export CCACHE_DIR:=$(if $(call qstrip,$(CONFIG_CCACHE_DIR)),...,$(TOPDIR)/.ccache)
+   ```
+
+   so exporting `CCACHE_DIR` from the workflow does nothing. The tree has to be
+   edited, and `CONFIG_CCACHE_DIR` is not a Kconfig symbol in this release.
+
+2. **A restored `$SRC/.ccache` breaks the next build.** `build.sh` runs
+   `rmdir "$SRC"` before re-cloning and aborts with "Unexpected non-cache
+   files" if anything is left inside. A cache placed at the default location
+   would therefore fail the build on its second run.
+
+The chosen path avoids both, and avoids needing the OAuth `workflow` scope at
+all:
+
+- `CONFIG_CCACHE=y` in the device config.
+- `build.sh` rewrites the `CCACHE_DIR` line in the disposable OpenWrt tree to
+  point at `$SRC/dl/.ccache`, then verifies the rewrite took.
+- `dl/` is **already** restored and saved by the existing download-cache step,
+  so the compiler cache rides along with no workflow edit.
+- `CCACHE_MAXSIZE` defaults to `3G` there, because OpenWrt forces
+  `CCACHE_NOCOMPRESS` and the cache could otherwise evict the download cache.
+
+### Known limitation
+
+`actions/cache` entries are immutable per key, and the download key is a hash of
+`feeds.conf`, the device config and the DTS. So the compiler cache populated by
+a build is restored by later builds but **not updated by them** — objects
+compiled for the first time in build N only persist if the key changes.
+
+That is still the large win (the toolchain and package tree dominate), but it is
+not a fully rolling cache. A properly rolling cache needs a workflow change with
+a `github.run_id` key and prefix restore; that change is written and ready in
+`out/.github/workflows/yspeed-ramboot-build.yml` but requires the `workflow`
+scope to push.

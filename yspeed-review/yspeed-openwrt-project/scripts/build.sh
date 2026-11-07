@@ -124,9 +124,25 @@ make -C "$SRC" -j"$JOBS" V=s
 # Validate the resolved kernel configuration after the normal top-level build.
 KERNEL_DOTCONFIG="$(find "$SRC/build_dir" -type f -path '*/linux-*/.config' -print -quit)"
 [[ -n "$KERNEL_DOTCONFIG" ]] || { echo "Resolved kernel .config not found" >&2; exit 5; }
-for symbol in CONFIG_SPI_SPIDEV CONFIG_GPIO_SYSFS CONFIG_SPI_MT7621; do
-  grep -qx "$symbol=y" "$KERNEL_DOTCONFIG" || { echo "Required kernel symbol missing: $symbol" >&2; exit 5; }
+# Report the values we actually got before asserting, so a failure names the
+# real state instead of just "missing".
+for symbol in CONFIG_SPI CONFIG_SPI_MASTER CONFIG_SPI_MT7621 CONFIG_SPI_SPIDEV CONFIG_GPIO_SYSFS; do
+  printf 'kernel config   : %s -> %s\n' "$symbol" "$(grep -E "^$symbol=" "$KERNEL_DOTCONFIG" || echo 'ABSENT')"
 done
+for symbol in CONFIG_GPIO_SYSFS CONFIG_SPI_MT7621; do
+  grep -qx "$symbol=y" "$KERNEL_DOTCONFIG" || { echo "Required kernel symbol missing (must be builtin): $symbol" >&2; exit 5; }
+done
+# spidev is tristate and OpenWrt commonly resolves it to =m. That is fine as long
+# as the module package is installed, which DEVICE_PACKAGES now ensures via
+# kmod-spi-dev. Only a completely absent/disabled symbol is fatal.
+if grep -qx 'CONFIG_SPI_SPIDEV=y' "$KERNEL_DOTCONFIG"; then
+  echo "kernel config   : spidev builtin"
+elif grep -qx 'CONFIG_SPI_SPIDEV=m' "$KERNEL_DOTCONFIG"; then
+  echo "kernel config   : spidev module (provided by kmod-spi-dev)"
+else
+  echo "Required kernel symbol missing: CONFIG_SPI_SPIDEV (neither y nor m)" >&2
+  exit 5
+fi
 
 OUT="$SRC/bin/targets/ramips/mt76x8"
 IMAGE="$(find "$OUT" -maxdepth 1 -type f -name '*yspeed_ys-gps-12832-initramfs-kernel.bin' -print -quit)"
