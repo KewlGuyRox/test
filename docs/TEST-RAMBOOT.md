@@ -26,7 +26,7 @@ Do not issue commands from an unverified address recommendation.
 |---|---|
 | Serial console | 57600 8N1 on `ttyS0` (verify against the actual unit) |
 | Network | Ethernet connected to WAN port (`eth0.2`) |
-| DHCP | Address acquisition only; do not accept a default gateway or DNS |
+| DHCP | Accept the assigned address, default gateway, and DNS settings from the network's DHCP server; static IPv4 is configurable in LuCI |
 | TFTP server | Same L2 segment, serving the exact validated image |
 | Image | `openwrt-ramips-mt76x8-yspeed_ys-gps-12832-initramfs-kernel.bin` |
 | Recovery | Power cycle only; no flash writes |
