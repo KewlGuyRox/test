@@ -8,7 +8,7 @@ json_string() {
     if [ -z "${1:-}" ] || [ "$1" = "n/a" ] || [ "$1" = "null" ]; then
         printf 'null'
     else
-        printf '"%s"' "$(printf '%s' "$1" | tr '\\r\\n' '  ' | sed 's,\\\\,\\\\\\\\,g; s,",\\\\",g')"
+        printf '"%s"' "$(printf '%s' "$1" | tr '\r\n' '  ' | sed 's,\\,\\\\,g; s,",\\",g')"
     fi
 }
 json_number() {
