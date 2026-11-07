@@ -1,31 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/*
- * YSPEED YS-GPS-12832 board DTS for OpenWrt 25.12.6.
- * Draft for source-build integration; must be compiled and reviewed before boot.
- *
- * Verified from vendor DTB / flash backup:
- *   MT7628AN; UART0 console 57600; UART1 GNSS; UART2 front-panel serial;
- *   PPS GPIO11 active-high; DS1307 @ 0x68; 240x320 ST7789 SPI TFT.
- *   W25Q256 32 MiB; firmware partition starts 0x50000 and is 0x1fb0000 bytes;
- *   switch0 VLAN1 ports 1-4 + CPU6 tagged; VLAN2 port0 + CPU6 tagged.
- *
- * Factory MAC note: captured /etc/config/network uses 60:70:72:59:22:0b.
- * The backed-up factory bytes place that address at factory-relative 0x2e;
- * 0x28 contains the adjacent address ending :0a. Use 0x2e for Ethernet.
- *
- * No Wi-Fi hardware/functionality is present. PCIe/WMAC remain disabled and
- * no wireless device nodes or wireless kernel packages are added.
- */
-
-/dts-v1/;
-
+/* YSPEED YS-GPS-12832: MT7628AN, wired-only, RAM-boot profile. */
+ /dts-v1/;
 #include "mt7628an.dtsi"
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
 
 / {
         model = "YSPEED YS-GPS-12832";
-        compatible = "yspeed,ys-gps-12832", "YS-GPS-12832", "mediatek,mt7628an-soc";
+        compatible = "yspeed,ys-gps-12832", "mediatek,mt7628an-soc";
 
         aliases {
                 serial0 = &uartlite;
@@ -33,9 +15,7 @@
                 serial2 = &uart2;
         };
 
-        chosen {
-                bootargs = "console=ttyS0,57600";
-        };
+        chosen { bootargs = "console=ttyS0,57600"; };
 
         pps-gps {
                 compatible = "pps-gpio";
@@ -56,21 +36,18 @@
                         gpios = <&gpio 38 GPIO_ACTIVE_LOW>;
                         debounce-interval = <60>;
                 };
-
                 lcd-up {
                         label = "LCD Up";
                         linux,code = <KEY_UP>;
                         gpios = <&gpio 18 GPIO_ACTIVE_LOW>;
                         debounce-interval = <30>;
                 };
-
                 lcd-enter {
                         label = "LCD Enter";
                         linux,code = <KEY_ENTER>;
                         gpios = <&gpio 23 GPIO_ACTIVE_LOW>;
                         debounce-interval = <30>;
                 };
-
                 lcd-down {
                         label = "LCD Down";
                         linux,code = <KEY_DOWN>;
@@ -80,8 +57,6 @@
         };
 };
 
-/* Preserve the vendor pinmux for reset/WLAN-indicator pads. The WLAN LED
- * device itself is intentionally omitted because the board has no radio. */
 &state_default {
         gpio {
                 groups = "wdt", "wled_an";
@@ -89,27 +64,17 @@
         };
 };
 
-&uartlite {
-        status = "okay";
-};
-
-&uart1 {
-        status = "okay";
-};
-
-&uart2 {
-        status = "okay";
-};
+&uartlite { status = "okay"; };
+&uart1 { status = "okay"; };
+&uart2 { status = "okay"; };
 
 &i2c {
         status = "okay";
-
         rtc@68 {
                 compatible = "dallas,ds1307";
                 reg = <0x68>;
                 status = "okay";
         };
-
 };
 
 &spi0 {
@@ -121,40 +86,33 @@
                 compatible = "jedec,spi-nor";
                 reg = <0>;
                 spi-max-frequency = <40000000>;
-
                 partitions {
                         compatible = "fixed-partitions";
                         #address-cells = <1>;
                         #size-cells = <1>;
-
                         partition@0 {
                                 label = "u-boot";
                                 reg = <0x00000000 0x00030000>;
                                 read-only;
                         };
-
                         partition@30000 {
                                 label = "u-boot-env";
                                 reg = <0x00030000 0x00010000>;
                                 read-only;
                         };
-
                         partition@40000 {
                                 label = "factory";
                                 reg = <0x00040000 0x00010000>;
                                 read-only;
-
                                 nvmem-layout {
                                         compatible = "fixed-layout";
                                         #address-cells = <1>;
                                         #size-cells = <1>;
-
                                         macaddr_factory: mac-address@2e {
                                                 reg = <0x2e 0x6>;
                                         };
                                 };
                         };
-
                         partition@50000 {
                                 compatible = "denx,uimage";
                                 label = "firmware";
@@ -164,46 +122,27 @@
         };
 
         /*
-         * Ribbon-connected front-panel TFT. The vendor GPIO map records
-         * GPIO6 as the CS1 pad, GPIO16 D/C, GPIO14 reset and GPIO19 backlight.
-         * CS1 is provided by the MT7628 SPI pinmux group; do not request GPIO6
-         * separately while the hardware SPI controller owns chip select.
+         * The vendor firmware drives the colour ST7789 panel from userspace
+         * through /dev/spidev0.1. D/C, reset and backlight are GPIO offsets
+         * 16, 14 and 19; they are intentionally not claimed by kernel drivers.
+         * CS1 is hardware SPI chip-select via spi_cs1_pins.
          */
-        display@1 {
-                compatible = "sitronix,st7789v";
+        st7789@1 {
+                compatible = "yspeed,st7789-spidev";
                 reg = <1>;
-                /* Vendor DTB confirms SPI mode 0 at 40 MHz. */
                 spi-max-frequency = <40000000>;
-                buswidth = <8>;
-                rotate = <0>;
-                fps = <30>;
-                bgr;
-                dc-gpios = <&gpio 16 GPIO_ACTIVE_HIGH>;
-                reset-gpios = <&gpio 14 GPIO_ACTIVE_LOW>;
-                led-gpios = <&gpio 19 GPIO_ACTIVE_HIGH>;
         };
 };
 
-&gdma {
-        status = "okay";
-};
-
+&gdma { status = "okay"; };
 &ethernet {
         nvmem-cells = <&macaddr_factory>;
         nvmem-cell-names = "mac-address";
         status = "okay";
 };
-
 &esw {
         compatible = "mediatek,mt7628-esw", "ralink,rt3050-esw";
         status = "okay";
 };
-
-/* This is a wired-only board: do not enable radio buses or radio devices. */
-&pcie {
-        status = "disabled";
-};
-
-&wmac {
-        status = "disabled";
-};
+&pcie { status = "disabled"; };
+&wmac { status = "disabled"; };
