@@ -26,11 +26,14 @@ footer{color:#8da3b6;font-size:.8rem;margin-top:16px}
 <div class="grid">
 <section><h2>GNSS POSITION</h2><div id="fix" class="big">Loading…</div>
 <div class="kv"><span>Receiver UTC</span><span id="utc">—</span></div>
-<div class="kv"><span>UTC valid</span><span id="utcvalid">—</span></div>
+<div class="kv"><span>UTC reported</span><span id="utcreported">—</span></div>
+<div class="kv"><span>Precision eligible</span><span id="utceligible">—</span></div>
 <div class="kv"><span>Latitude</span><span id="lat">—</span></div>
 <div class="kv"><span>Longitude</span><span id="lon">—</span></div>
 <div class="kv"><span>Altitude</span><span id="alt">—</span></div>
-<div class="kv"><span>Satellites reported</span><span id="sats">—</span></div></section>
+<div class="kv"><span>Satellites reported</span><span id="sats">—</span></div>
+<div class="kv"><span>HDOP / VDOP / PDOP</span><span id="dop">—</span></div>
+<div class="kv"><span>Speed / course</span><span id="motion">—</span></div></section>
 <section><h2>NTP DISCIPLINE</h2><div id="ntpstate" class="big">—</div>
 <div class="kv"><span>Selected reference</span><span id="ref">—</span></div>
 <div class="kv"><span>Stratum</span><span id="stratum">—</span></div>
@@ -57,8 +60,11 @@ async function refresh(){
  try{
   const r=await fetch('/cgi-bin/yspeed-status',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);
   const d=await r.json(),g=d.gnss||{},n=d.ntp||{},p=d.pps||{},net=d.network||{};
-  state('fix',g.fix);show('utc',g.utc);show('utcvalid',g.utc_valid?'YES':'NO');
+  state('fix',g.fix);show('utc',g.utc);show('utcreported',g.utc_reported?'YES':'NO');
+  show('utceligible',g.utc_precision_eligible?'YES':'NO — PPS association unverified');
   show('lat',g.latitude);show('lon',g.longitude);show('alt',g.altitude_m===null?null:g.altitude_m+' m');show('sats',g.satellites_reported);
+  show('dop',[g.hdop,g.vdop,g.pdop].map(v=>v===null||v===undefined?'—':v).join(' / '));
+  show('motion',g.speed_mps===null||g.speed_mps===undefined?'Unavailable':g.speed_mps+' m/s · '+(g.course_deg??'—')+'°');
   state('ntpstate',n.state);show('ref',n.reference);show('stratum',n.stratum);show('leap',n.leap_status);show('offset',n.last_offset);show('rms',n.rms_offset);
   show('ppsdev',p.device?'present':'not detected');show('assert',p.assert);show('rtc',d.rtc);
   show('ip',net.ipv4);show('gw',net.gateway);show('dns',net.dns);show('uptime',d.uptime_seconds===null?null:Math.floor(d.uptime_seconds)+' s');
