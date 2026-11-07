@@ -173,7 +173,19 @@ static int flush(struct display *d)
         frame[2*i]=(uint8_t)(d->pixels[i]>>8);
         frame[2*i+1]=(uint8_t)d->pixels[i];
     }
-    int rc=spi_write(d,frame,total*2);
+    struct spi_ioc_transfer transfers[38];
+    memset(transfers,0,sizeof(transfers));
+    size_t offset=0;
+    for(size_t i=0;i<38;i++) {
+        size_t n=total*2-offset;
+        if(n>4096) n=4096;
+        transfers[i].tx_buf=(uintptr_t)(frame+offset);
+        transfers[i].len=(uint32_t)n;
+        transfers[i].speed_hz=SPI_HZ;
+        transfers[i].bits_per_word=8;
+        offset+=n;
+    }
+    int rc=ioctl(d->spi,SPI_IOC_MESSAGE(38),transfers)<0?-1:0;
     free(frame);
     return rc;
 }
