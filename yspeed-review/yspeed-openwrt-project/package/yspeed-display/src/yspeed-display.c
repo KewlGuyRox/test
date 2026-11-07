@@ -989,7 +989,7 @@ int main(int argc, char **argv)
 					continue;
 				if (ev.value == 1) {
 					pressed_code = ev.code;
-					pressed_us = (int64_t)ev.time.tv_sec * 1000000 + ev.time.tv_usec;
+					pressed_us = (int64_t)ev.input_event_sec * 1000000 + ev.input_event_usec;
 					continue;
 				}
 				if (ev.value != 0 || ev.code != pressed_code)
@@ -999,7 +999,7 @@ int main(int argc, char **argv)
 					gpio_set(d.backlight, 1);
 					backlight_on = 1;
 				}
-				int64_t released_us = (int64_t)ev.time.tv_sec * 1000000 + ev.time.tv_usec;
+				int64_t released_us = (int64_t)ev.input_event_sec * 1000000 + ev.input_event_usec;
 				int held = released_us - pressed_us >= 1000000;
 				pressed_code = -1;
 				if (held && ev.code == KEY_DOWN) {
