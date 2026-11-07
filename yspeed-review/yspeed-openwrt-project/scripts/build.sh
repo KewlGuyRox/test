@@ -9,13 +9,31 @@ for x in git make gcc g++ python3 rsync file sha256sum; do need "$x"; done
 if [[ ! -d "$SRC/.git" ]]; then
   mkdir -p "$WORKDIR"; CACHED_DL="$WORKDIR/.cached-openwrt-dl"
   if [[ -d "$SRC/dl" ]]; then rm -rf "$CACHED_DL"; mv "$SRC/dl" "$CACHED_DL"; fi
+  # OpenWrt puts the compiler cache at $SRC/.ccache (its default CCACHE_DIR).
+  # Move it aside too, otherwise the rmdir below trips over it and the build
+  # aborts with "Unexpected non-cache files". Restored after the clone.
+  CACHED_CCACHE="$WORKDIR/.cached-ccache"
+  if [[ -d "$SRC/.ccache" ]]; then rm -rf "$CACHED_CCACHE"; mv "$SRC/.ccache" "$CACHED_CCACHE"; fi
   if [[ -d "$SRC" ]]; then rmdir "$SRC" 2>/dev/null || { echo "Unexpected non-cache files in $SRC" >&2; exit 2; }; fi
   git clone --branch "$TAG" --depth 1 "$REPO" "$SRC"
   [[ ! -d "$CACHED_DL" ]] || mv "$CACHED_DL" "$SRC/dl"
+  [[ ! -d "$CACHED_CCACHE" ]] || mv "$CACHED_CCACHE" "$SRC/.ccache"
 fi
 git -C "$SRC" fetch --tags --depth 1 origin "$TAG"
 git -C "$SRC" checkout --detach "$TAG"
 [[ "$(git -C "$SRC" describe --tags --exact-match HEAD)" == "$TAG" ]] || { echo "Unexpected OpenWrt source revision" >&2; exit 3; }
+# Compiler cache. OpenWrt hardcodes CCACHE_DIR to $(TOPDIR)/.ccache, which is
+# not inside any path CI caches. Redirect it into $SRC/dl/.ccache: the download
+# cache step already restores and saves dl/, so the compiler cache rides along
+# with no workflow change. Set CCACHE_MAXSIZE here because rules.mk does not
+# override it, and OpenWrt forces CCACHE_NOCOMPRESS so caches grow fast.
+if grep -q '^export CCACHE_DIR:=' "$SRC/rules.mk"; then
+  sed -i "s#^export CCACHE_DIR:=.*#export CCACHE_DIR:=$SRC/dl/.ccache#" "$SRC/rules.mk"
+  grep -qF "export CCACHE_DIR:=$SRC/dl/.ccache" "$SRC/rules.mk" || { echo "Cannot redirect CCACHE_DIR" >&2; exit 2; }
+else
+  echo "rules.mk has no CCACHE_DIR line; compiler cache disabled" >&2
+fi
+export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-3G}"
 cp "$PROJECT_DIR/feeds.conf" "$SRC/feeds.conf"
 cp "$PROJECT_DIR/board/mt7628an_yspeed_ys-gps-12832.dts" "$SRC/target/linux/ramips/dts/mt7628an_yspeed_ys-gps-12832.dts"
 cp -a "$PROJECT_DIR/package/yspeed-display" "$SRC/package/"
