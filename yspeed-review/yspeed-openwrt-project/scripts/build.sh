@@ -198,7 +198,7 @@ if grep -q '^CONFIG_PACKAGE_kmod-gpio-button-hotplug=y$' "$SRC/.config"; then
   exit 4
 fi
 if grep -Eq '^CONFIG_PACKAGE_(wpad[^=]*|iw|kmod-mt7603(e)?|kmod-mac80211|kmod-mt76-core|wireless-regdb)=(y|m)$' "$SRC/.config"; then
-e selected in wired-only build config" >&2
+  echo "Wireless package selected in wired-only build config" >&2
   grep -E '^CONFIG_PACKAGE_(wpad[^=]*|iw|kmod-mt7603(e)?|kmod-mac80211|kmod-mt76-core|wireless-regdb)=(y|m)$' "$SRC/.config" >&2 || true
   exit 4
 fi
