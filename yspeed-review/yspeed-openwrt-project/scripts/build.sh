@@ -50,12 +50,12 @@ sh "$PROJECT_DIR/scripts/disable-wireless-defaults.sh" "$SRC"
 # kmod-fb package's @DISPLAY_SUPPORT dependency (not enabled by mt76x8).
 KERNEL_CONFIG="$SRC/target/linux/ramips/mt76x8/config-6.12"
 for entry in \
-  'CONFIG_STAGING=y' \\
+  'CONFIG_STAGING=y' \
   'CONFIG_GPIOLIB=y' \
   'CONFIG_SPI_BITBANG=y' \
   'CONFIG_FB=y' \
   'CONFIG_FB_DEVICE=y' \
-  'CONFIG_FB_DEFERRED_IO=y' \\
+  'CONFIG_FB_DEFERRED_IO=y' \
   'CONFIG_FB_SYS_FOPS=y' \
   'CONFIG_FB_SYSMEM_FOPS=y' \
   'CONFIG_FB_SYS_COPYAREA=y' \
@@ -69,7 +69,6 @@ for entry in \
   'CONFIG_FB_TFT=m' \
   'CONFIG_FB_TFT_ST7789V=m'; do
   grep -qxF "$entry" "$KERNEL_CONFIG" || printf '%s\n' "$entry" >> "$KERNEL_CONFIG"
-done
 
 VIDEO_MK="$SRC/package/kernel/linux/modules/video.mk"
 if ! grep -qF 'KernelPackage/fb-tft-yspeed' "$VIDEO_MK"; then
