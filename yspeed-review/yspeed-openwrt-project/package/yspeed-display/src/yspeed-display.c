@@ -120,6 +120,8 @@ static int json_string_value(const char *json, const char *key, char *out, size_
     out[i] = '\0';
     return i > 0;
 }
+static int json_number(const char *line, const char *key, double *v);
+
 static int json_bool_value(const char *json, const char *key) {
     char needle[48];
     snprintf(needle, sizeof(needle), "\"%s\":", key);
@@ -186,50 +188,12 @@ static void get_shared_status(struct telemetry *t) {
     }
 }
 
-static void get_ip(char *out, size_t n) {
-    struct ifaddrs *all = NULL;
-    snprintf(out,n,"NO DHCP ADDRESS");
-    if (getifaddrs(&all)) return;
-    for (struct ifaddrs *p=all; p; p=p->ifa_next) {
-        if (!p->ifa_addr || strcmp(p->ifa_name,"eth0.2") || p->ifa_addr->sa_family != AF_INET) continue;
-        if (inet_ntop(AF_INET, &((struct sockaddr_in *)p->ifa_addr)->sin_addr, out, n)) break;
-    }
-    freeifaddrs(all);
-}
 static int json_number(const char *line, const char *key, double *v) {
     char k[32]; snprintf(k,sizeof(k),"\"%s\":",key);
     const char *p=strstr(line,k); if(!p) return 0;
     p+=strlen(k); while(*p==' ')p++;
     if(*p=='n') return 0;
     char *end=NULL; *v=strtod(p,&end); return end!=p;
-}
-static void get_gps(char *out, size_t n) {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) { snprintf(out,n,"GPSD UNAVAILABLE"); return; }
-    struct timeval tv = {.tv_sec=2,.tv_usec=0};
-    setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));
-    struct sockaddr_in addr = {.sin_family=AF_INET,.sin_port=htons(2947)};
-    addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
-    if (connect(fd,(struct sockaddr *)&addr,sizeof(addr)) < 0) {
-        close(fd); snprintf(out,n,"GPSD UNAVAILABLE"); return;
-    }
-    static const char watch[] = "?WATCH={\"enable\":true,\"json\":true};\n";
-    if (write(fd,watch,sizeof(watch)-1) < 0) {
-        close(fd); snprintf(out,n,"GPSD UNAVAILABLE"); return;
-    }
-    FILE *f=fdopen(fd,"r");
-    if(!f){close(fd);snprintf(out,n,"GPSD UNAVAILABLE");return;}
-    char line[512]; int found=0;
-    while(fgets(line,sizeof(line),f)) {
-        if(!strstr(line,"\"class\":\"TPV\"")) continue;
-        double mode=0,lat=0,lon=0;
-        json_number(line,"mode",&mode);
-        if(mode>=2 && json_number(line,"lat",&lat) && json_number(line,"lon",&lon)) {
-            snprintf(out,n,"FIX %.4f %.4f",lat,lon); found=1; break;
-        }
-    }
-    fclose(f);
-    if(!found) snprintf(out,n,"WAITING FOR GNSS FIX");
 }
 static int has_key(const unsigned long *bits, int code) {
     const int width = (int)(sizeof(unsigned long) * 8);
