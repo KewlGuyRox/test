@@ -76,6 +76,8 @@ Stop and retain the complete log.
 
 ## Checks after boot
 
+For PPS regression testing, do not treat `/dev/pps0` existing as a pass. With the antenna/receiver connected and a valid fix, run `ppstest /dev/pps0` and record several consecutive assertion timestamps and sequence numbers. Expect approximately one-second increments. Then independently inspect Chrony sources/tracking to establish whether PPS is selected and locked; kernel PPS events alone do not prove Chrony discipline.
+
 First verify the network contract. The device should obtain its DHCP address
 but must **not** install a DHCP-provided default route or DNS server.
 
@@ -87,7 +89,7 @@ cat /etc/resolv.conf
 ip -4 addr show | grep -c '192.168.88'   # must print 0
 ```
 
-Expected: eth0.2 receives the address and, when supplied, the default route and DNS settings from DHCP. Check the assigned gateway and resolver list against the bench network. LuCI can change WAN to static addressing when required.
+Expected: eth0.2 receives its DHCP address, but **no DHCP-provided default route and no DHCP-provided DNS server** are installed. `ip route` must show no default route learned from this WAN lease, and resolver files must not contain DHCP-learned nameservers. LuCI can change WAN to static addressing when required.
 
 Then verify services:
 
@@ -110,11 +112,23 @@ ownership, SPI node, and panel wiring have been verified. The renderer's
 self-test is not a substitute for confirming that it selected the correct
 GPIO controller.
 
+## Historical PPS hardware evidence — November 4, 2026
+
+PPS was previously verified on the physical receiver path while the antenna was connected. The receiver reported a healthy 3D fix, 18 visible satellites, and repeated `ANTENNA OK` text. `ppstest /dev/pps0` captured these consecutive assertions, approximately one second apart:
+
+```text
+1793832431.508000420#245936
+1793832432.507999592#245937
+1793832433.508000219#245938
+```
+
+A later `/sys/class/pps/pps0/assert` read was `1793832435.508000293#245940`; another captured assertion was `1793832522.508002169#246027`. This demonstrates recurring electrical edges reaching the Linux GPIO/PPS path, not merely device-node registration. No oscilloscope voltage/pulse-shape measurement or UTC edge-phase validation was recorded. This is historical hardware evidence; repeat the test on the current replacement image after reconnecting the receiver. Chrony PPS selection and lock must be tested separately.
+
 ## Antenna disconnected
 
 The GNSS antenna is currently disconnected. In this state:
 
-- No satellite fix or PPS lock is expected.
+- No new satellite fix or PPS assertions are expected in the current disconnected-antenna state. This does not invalidate the November 4 historical PPS hardware test above.
 - The status display must report no fix honestly; it must not invent satellite
   data or imply GNSS synchronization.
 - Chrony may remain unsynchronized if no approved upstream source is configured
@@ -130,8 +144,8 @@ For every attempt, record:
 - Artifact filename, byte size, and validator output.
 - U-Boot `bdinfo`, image header, and calculated memory ranges.
 - Full serial boot log.
-- Runtime IP, routes, resolver contents, SSH result.
-- SPI/GPIO inventory and display test observations.
+- Runtime IP, routes, resolver contents (confirm no DHCP route/DNS), SSH result.
+- SPI/GPIO inventory, display test observations, and (with antenna attached) `ppstest /dev/pps0` assertion timestamps plus Chrony PPS source/lock evidence.
 - Chrony listener and client query results.
 
 No test is complete based on a successful build alone.
