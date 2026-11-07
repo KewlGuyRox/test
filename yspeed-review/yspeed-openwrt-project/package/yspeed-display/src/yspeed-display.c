@@ -75,6 +75,7 @@ static void rect(struct screen *s, int x, int y, int w, int h, uint32_t c) {
     for (int yy=y; yy<y+h; yy++) for (int xx=x; xx<x+w; xx++) pixel(s,xx,yy,c);
 }
 static int glyph(char c) {
+    if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
     if (c >= 'A' && c <= 'Z') return c-'A';
     if (c >= '0' && c <= '9') return 26+c-'0';
     if (c == ' ') return 36;
