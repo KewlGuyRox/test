@@ -2,13 +2,16 @@
 
 ## Status
 
-This repository contains the YS-GPS-12832 RAM-boot build project. GitHub Actions
-build #73 completed successfully for commit `44d57f7eb6e6a267b31001cf2ad5f64377771c17`
-and published the `yspeed-ramboot-openwrt-25.12.6` artifact. A successful
-compile is not hardware validation: the ST7789 panel is still blank on the
-bench, and the three keys still require event-device verification. The build
-script pins OpenWrt 25.12.6 and the package/LuCI feed commits recorded in the
-official 25.12.6 `feeds.buildinfo`.
+This repository contains the YS-GPS-12832 RAM-boot build project. Build #73
+completed, but its artifact predates the corrected GPIO chip-select path and
+is not a release candidate. Build #74 failed before compilation because the
+ramips target's global package defaults reselected
+`kmod-gpio-button-hotplug`, which conflicts with the intended native
+`gpio-keys`/evdev driver. The `yspeed/blocker-resolution` branch removes that
+default, routes ST7789 chip select through the vendor GPIO6 mapping, and
+expands the LCD telemetry pages. This branch has deliberately not been built
+or hardware-validated. The build script pins OpenWrt 25.12.6 and the
+package/LuCI feed commits recorded in the official 25.12.6 `feeds.buildinfo`.
 
 ## Board and network assumptions
 
@@ -46,24 +49,31 @@ official 25.12.6 `feeds.buildinfo`.
 - The GPS antenna is currently disconnected; no satellite fix is expected
   during bench testing. Receiver serial output and PPS electrical activity
   remain separate checks and must not be conflated with satellite reception.
-- The vendor display package is a stripped LVGL binary, not available source.
-  It referenced `/gps_data_shm` and its legacy UCI file names `/dev/ttyS2` at
-  9600 baud. The current build's GPSD path is `/dev/ttyS1`; do not silently
-  switch UARTs until the board routing is verified.
+- The vendor display package is a stripped LVGL 8.3.5 userspace application.
+  It opens `/dev/spidev0.1`, uses sysfs GPIO control, and its configuration
+  identifies GPIO6 as SPI_CS, GPIO16 as D/C, GPIO14 as reset, GPIO19 as
+  backlight, and GPIO18/23/26 as the three keys. The recovered
+  `/etc/spilcd/wangzhi` file contains a URL; it is not a GPIO map. The vendor
+  GPS UI backend uses `/dev/ttyS2` and `/gps_data_shm`; the separate vendor
+  time-sync path uses `/dev/ttyS1`. The current GPSD/Chrony path stays on
+  `/dev/ttyS1`; do not silently move it to ttyS2.
 - PPS is GPIO11 active-high. GPS/PPS Chrony refclocks remain `noselect` until
   UTC-second association is verified.
 - DS1307 RTC is at I2C `0x68`. The ribbon-connected display is a 240x320
-  ST7789V SPI TFT. The board DTS now enables SPI0 CS1 at the vendor-confirmed 40 MHz and binds the ST7789V
-  framebuffer driver using the recovered GPIO map: D/C GPIO16, reset GPIO14,
-  backlight GPIO19, with CS1 on the MT7628 SPI pinmux. The three front-panel
-  keys are GPIO18/23/26 (top/bottom navigation and middle select). A long press
-  on the bottom key is reserved for the LCD setup menu. LCD text and menus are
-  English-only; Chinese language support is intentionally excluded. A
-  lightweight framebuffer dashboard is included and starts at boot; it shows
-  local time, the DHCP address on eth0.2, and GPSD fix/coordinates. The
-  reset/backlight electrical polarity and panel rotation must be confirmed
-  during the first RAM-only display test. The old compiled candidate artifacts still contain
-  the obsolete SH1106 node and are not release artifacts.
+  ST7789V SPI TFT. The display child remains SPI0 device 1, but the DTS now
+  routes that chip select through `cs-gpios = <0>, <&gpio 6 GPIO_ACTIVE_LOW>`
+  rather than the native SPI CS1 pinmux. This matches the vendor's explicit
+  GPIO6 SPI_CS assignment. D/C is GPIO16, reset GPIO14, and backlight GPIO19.
+  The three front-panel keys are GPIO18/23/26 and use standard Linux
+  `gpio-keys` plus evdev. The ramips target's legacy
+  `kmod-gpio-button-hotplug` default is removed from the isolated build
+  checkout because it claims the same DT node and rejects KEY_UP/KEY_DOWN.
+  LCD text and menus are English-only. The framebuffer dashboard starts at
+  boot and presents GNSS position, UTC, satellite count, DOP, speed/course,
+  PPS counters, RTC, Chrony state/offsets, and network addressing from the
+  same read-only telemetry JSON as the web page. Panel initialization, reset
+  and backlight polarity, rotation, and visible pixels still require one
+  controlled RAM-only hardware validation.
 
 ## Why the image is RAM-boot-only
 
@@ -91,7 +101,13 @@ Run:
 ./scripts/build.sh "$HOME/build/yspeed-openwrt-25.12.6"
 ```
 
-Override parallelism with `JOBS=4` or another value. The script modifies only the disposable OpenWrt source checkout: the upstream MT76x8 `DEFAULT_PACKAGES` line is narrowed from `kmod-mt7603 wpad-basic-mbedtls swconfig` to `swconfig`. This is necessary because the MT76x8 target defaults otherwise reintroduce wireless packages even though the YSPEED device profile is wired-only. `rpcd-mod-iwinfo` may remain as a LuCI RPC integration dependency; it does not enable a radio or load a wireless driver.
+Override parallelism with `JOBS=4` or another value. The script modifies only the disposable OpenWrt source checkout: it narrows
+the MT76x8 default package set to remove wireless packages and removes
+`kmod-gpio-button-hotplug` from the ramips global `DEFAULT_PACKAGES` line.
+That second change is required because the global default otherwise
+reintroduces the legacy button driver even when the YSPEED device profile
+excludes it. `rpcd-mod-iwinfo` may remain as a LuCI RPC integration dependency;
+it does not enable a radio or load a wireless driver.
 
 The script:
 
@@ -176,9 +192,9 @@ reviewed:
 - Confirm that the TFTP load address does not overlap the decompression or
   initramfs destination in 128 MiB RAM.
 - Confirm UART1/UART2, GPIO11 PPS, DS1307, Ethernet/switch and VLANs on the
-  compiled DTB. During RAM-only bring-up, verify the ST7789 panel orientation,
-  reset polarity and backlight polarity; the driver and framebuffer dashboard
-  are now selected by the build.
+  compiled DTB. During RAM-only bring-up, verify the ST7789 GPIO6 chip-select
+  waveform, panel orientation, reset polarity, backlight polarity and visible
+  pixels; this branch has not been built or hardware-validated.
 - Confirm the factory MAC NVMEM cell uses offset `0x2e`, matching the captured
   WAN MAC `60:70:72:59:22:0b`; offset `0x28` contains the adjacent `...:0a`.
 - Verify GPSD is configured for `/dev/ttyS1` at its existing 9600-baud host
@@ -196,7 +212,9 @@ requires a separate review and explicit owner approval.
 The network contract is intentionally unambiguous:
 
 - **Use `eth0.2` only** for device access on the owner's network.
-- The interface obtains its IPv4 address and DNS by DHCP.
+- The interface obtains only its IPv4 address by DHCP. Peer DNS and default
+  route installation are disabled; this isolated management segment receives
+  no gateway or DNS from DHCP.
 - The OpenWrt UCI network name remains `wan` for compatibility with the
   existing firewall rules. This is a logical label, not a physical topology
   description.
@@ -207,9 +225,10 @@ The network contract is intentionally unambiguous:
 
 ## Display status
 
-The ST7789V device-tree node, CS1 pinmux, kernel module package, and a small
-framebuffer dashboard are now integrated into the source build. The display
-application reports local time, the eth0.2 DHCP address, and GPSD fix status.
-The checked-in legacy uImage/DTB artifacts predate this integration; only a
+The ST7789V device-tree node, GPIO6 chip-select mapping, kernel module package,
+and framebuffer dashboard are integrated into the blocker-resolution source
+branch. The display application reports the same GNSS, PPS, RTC, NTP and
+network telemetry fields as the web status endpoint. This is not yet a
+hardware-validated image. The checked-in legacy uImage/DTB artifacts predate this integration; only a
 fresh build can validate that the driver and application are actually present.
 Panel rotation and reset/backlight polarity remain first-boot validation items.
