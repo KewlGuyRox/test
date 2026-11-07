@@ -206,6 +206,10 @@ python3 "$PROJECT_DIR/scripts/validate-uimage.py" "$WORKDIR/artifacts/yspeed-ram
 # Publish a checksummed rootfs-overlay patch bundle for quick rack-side
 # updates. Applying this bundle changes the running filesystem only; it does
 # not write MTD and is not a substitute for a later reviewed sysupgrade.
+chmod 0755 "$PROJECT_DIR/files/usr/sbin/yspeed-status" \
+  "$PROJECT_DIR/files/usr/sbin/yspeed-apply-update" \
+  "$PROJECT_DIR/files/www/cgi-bin/yspeed-status" \
+  "$PROJECT_DIR/files/etc/uci-defaults/"* 2>/dev/null || true
 tar -czf "$WORKDIR/artifacts/yspeed-rack-update.tar.gz" -C "$PROJECT_DIR/files" .
 sha256sum "$WORKDIR/artifacts/yspeed-rack-update.tar.gz" > "$WORKDIR/artifacts/yspeed-rack-update.tar.gz.sha256"
 
