@@ -125,9 +125,12 @@ The script:
 ## Rack-side patch updates (no flash)
 
 Every successful build also publishes `yspeed-rack-update.tar.gz` and its
-SHA-256 file. This bundle contains the rootfs overlay (configuration, status
-API and web UI). It is intended for quick software/configuration patches on a
-running rack unit; it does not contain a kernel or firmware image.
+SHA-256 file. This bundle contains only the Chrony configuration, status API,
+web UI and updater helper. It deliberately excludes `/etc/config/network` and
+firewall configuration, so a patch cannot overwrite operator-specific static
+IP, gateway, DNS or security settings. It is intended for quick software and
+time-service patches on a running rack unit; it does not contain a kernel or
+firmware image.
 
 1. Copy the bundle to the appliance:
    `scp yspeed-rack-update.tar.gz root@<device-address>:/tmp/`
