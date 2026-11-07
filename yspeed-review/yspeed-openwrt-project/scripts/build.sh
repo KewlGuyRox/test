@@ -24,7 +24,7 @@ sh "$PROJECT_DIR/scripts/disable-wireless-defaults.sh" "$SRC"
 
 # Native MT7628 SPI master, spidev, and legacy GPIO sysfs.
 KERNEL_CONFIG="$SRC/target/linux/ramips/mt76x8/config-6.12"
-for entry in 'CONFIG_SPI=y' 'CONFIG_SPI_MASTER=y' 'CONFIG_SPI_MT7621=y' 'CONFIG_SPI_SPIDEV=y' 'CONFIG_GPIOLIB=y' 'CONFIG_GPIO_SYSFS=y'; do
+for entry in 'CONFIG_SPI=y' 'CONFIG_SPI_MASTER=y' 'CONFIG_SPI_MT7621=y' 'CONFIG_SPI_SPIDEV=y' 'CONFIG_GPIOLIB=y' 'CONFIG_GPIO_SYSFS=y' 'CONFIG_EXPERT=y'; do
   grep -qxF "$entry" "$KERNEL_CONFIG" || printf '%s\n' "$entry" >> "$KERNEL_CONFIG"
 done
 (cd "$SRC" && ./scripts/feeds update packages luci && \
@@ -66,6 +66,9 @@ if entry not in s:
 p.write_text(s)
 if entry not in p.read_text(): raise SystemExit("YSPEED spidev match patch failed")
 PY
+DISPLAY_SOURCE="$PROJECT_DIR/package/yspeed-display/src/yspeed-display.c"
+grep -q '/dev/spidev0.1' "$DISPLAY_SOURCE" || { echo "SPI userspace app missing spidev device" >&2; exit 5; }
+if grep -q '/dev/fb0' "$DISPLAY_SOURCE"; then echo "Framebuffer dependency remains" >&2; exit 5; fi
 make -C "$SRC" target/linux/compile V=s -j"$JOBS"
 KERNEL_DOTCONFIG="$(find "$SRC/build_dir" -type f -path '*/linux-*/.config' -print -quit)"
 [[ -n "$KERNEL_DOTCONFIG" ]] || { echo "Resolved kernel .config not found" >&2; exit 5; }
