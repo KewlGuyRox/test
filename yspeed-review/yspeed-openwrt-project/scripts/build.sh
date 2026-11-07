@@ -222,6 +222,16 @@ mkdir -p "$WORKDIR/artifacts"
 for token in 'YSPEED YS-GPS-12832' 'pps-gpio' 'dallas,ds1307' 'denx,uimage' 'yspeed,ys-gps-12832' 'mac-address@2e' 'sitronix,st7789v' 'display@1' 'pinctrl-0' 'LCD Up' 'LCD Enter' 'LCD Down'; do
   grep -qF "$token" "$WORKDIR/artifacts/yspeed-compiled.dts" || { echo "DTB check missing: $token" >&2; exit 7; }
 done
+# The ribbon-connected panel is the ST7789V only. The old vendor SH1106
+# I2C node was stale and must not return to the compiled board description.
+if grep -qF 'wealth,sh1106' "$WORKDIR/artifacts/yspeed-compiled.dts"; then
+  echo "Unexpected legacy SH1106 node in compiled YSPEED DTB" >&2
+  exit 7
+fi
+if ! grep -q 'spi-max-frequency = <0x2625a00>' "$WORKDIR/artifacts/yspeed-compiled.dts"; then
+  echo "Compiled ST7789 node is missing the vendor-confirmed 40 MHz SPI clock" >&2
+  exit 7
+fi
 
 cp "$IMAGE" "$WORKDIR/artifacts/yspeed-ramboot.uImage"
 python3 "$PROJECT_DIR/scripts/validate-uimage.py" "$WORKDIR/artifacts/yspeed-ramboot.uImage" \
