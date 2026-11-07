@@ -1,0 +1,7 @@
+#!/bin/sh
+# Make the intended time services start on every boot.
+# sysntpd is disabled separately so Chrony remains the sole NTP daemon.
+[ -x /etc/init.d/chronyd ] && /etc/init.d/chronyd enable
+[ -x /etc/init.d/gpsd ] && /etc/init.d/gpsd enable
+[ -x /etc/init.d/yspeed-display ] && /etc/init.d/yspeed-display enable
+exit 0
