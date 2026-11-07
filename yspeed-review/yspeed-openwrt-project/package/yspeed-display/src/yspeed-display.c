@@ -91,7 +91,7 @@ static void text(struct screen *s, int x, int y, const char *str, int scale, uin
 
 static int json_string_value(const char *json, const char *key, char *out, size_t n) {
     char needle[48];
-    snprintf(needle, sizeof(needle), "\\"%s\\":", key);
+    snprintf(needle, sizeof(needle), "\"%s\":", key);
     const char *p = strstr(json, needle);
     if (!p) return 0;
     p += strlen(needle);
@@ -99,10 +99,10 @@ static int json_string_value(const char *json, const char *key, char *out, size_
     p++;
     size_t i = 0;
     while (*p && *p != '"' && i + 1 < n) {
-        if (*p == '\\\\' && p[1]) p++;
+        if (*p == '\\' && p[1]) p++;
         out[i++] = *p++;
     }
-    out[i] = '\\0';
+    out[i] = '\0';
     return i > 0;
 }
 static void get_shared_status(char *fix, size_t fixn, char *utc, size_t utcn,
@@ -117,7 +117,7 @@ static void get_shared_status(char *fix, size_t fixn, char *utc, size_t utcn,
     if (!f) return;
     char json[8192];
     size_t used = fread(json, 1, sizeof(json) - 1, f);
-    json[used] = '\\0';
+    json[used] = '\0';
     pclose(f);
     json_string_value(json, "fix", fix, fixn);
     json_string_value(json, "utc", utc, utcn);
