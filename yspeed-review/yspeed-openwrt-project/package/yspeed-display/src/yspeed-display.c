@@ -53,6 +53,8 @@
 #define STATUS_JSON_MAX 8192
 
 static volatile sig_atomic_t g_running = 1;
+static int g_sat_count;
+static int g_sat_offset;
 
 struct display {
 	int spi;
@@ -200,8 +202,6 @@ static int gpio_chip_base_for(int offset)
 		if (base < 0 || ngpio <= offset)
 			continue;
 
-		if (best < 0)
-			best = base;
 		if (strstr(label, "10000600") || strstr(label, "mt7628") ||
 		    strstr(label, "mt7621")) {
 			best = base;
@@ -488,12 +488,32 @@ static void json_string(const char *json, const char *key, char *out, size_t out
 		snprintf(out, out_len, "UNAVAILABLE");
 }
 
+static int json_int_after(const char *start, const char *key, int fallback)
+{
+	char needle[40];
+	const char *p;
+	int value;
+	snprintf(needle, sizeof(needle), "\"%s\":", key);
+	p = strstr(start, needle);
+	if (!p)
+		return fallback;
+	p += strlen(needle);
+	return sscanf(p, "%d", &value) == 1 ? value : fallback;
+}
+
 struct snapshot {
 	char ipv4[40];
 	char fix[16];
 	char utc[40];
 	char ntp_state[24];
 	char reference[40];
+	int sat_count;
+	int sat_used_count;
+	int quality;
+	int sat_prn[64];
+	int sat_gnss[64];
+	int sat_snr[64];
+	int sat_used[64];
 };
 
 static void read_status(struct snapshot *s)
@@ -512,6 +532,35 @@ static void read_status(struct snapshot *s)
 	json_string(json, "utc", s->utc, sizeof(s->utc));
 	json_string(json, "state", s->ntp_state, sizeof(s->ntp_state));
 	json_string(json, "reference", s->reference, sizeof(s->reference));
+	s->sat_used_count = json_int_after(json, "satellites_used", 0);
+	s->quality = json_int_after(json, "quality", 0);
+	s->sat_count = 0;
+	const char *p = strstr(json, "\"satellites\":[");
+	if (p) {
+		p += strlen("\"satellites\":[");
+		while (*p && *p != ']' && s->sat_count < 64) {
+			const char *end;
+			if (*p != '{') { p++; continue; }
+			end = strchr(p, '}');
+			if (!end) break;
+			char object[192];
+			size_t n = (size_t)(end - p + 1);
+			if (n >= sizeof(object)) n = sizeof(object) - 1;
+			memcpy(object, p, n); object[n] = '\0';
+			int snr = json_int_after(object, "snr", 0);
+			if (snr > 0) {
+				int i = s->sat_count++;
+				s->sat_prn[i] = json_int_after(object, "prn", 0);
+				s->sat_gnss[i] = json_int_after(object, "gnss", 0);
+				s->sat_snr[i] = snr;
+				s->sat_used[i] = strstr(object, "\"used\":true") != NULL;
+			}
+			p = end + 1;
+		}
+	}
+	g_sat_count = s->sat_count;
+	if (g_sat_offset >= g_sat_count)
+		g_sat_offset = g_sat_count > 10 ? ((g_sat_count - 1) / 10) * 10 : 0;
 }
 
 static void draw_page(struct display *d, int page, const struct config *cfg)
@@ -558,7 +607,7 @@ static void draw_page(struct display *d, int page, const struct config *cfg)
 		draw_text(d, 12, 230, "ANTENNA REQUIRED", 1, aqua);
 		draw_text(d, 12, 250, "FOR SATELLITE FIX", 1, aqua);
 		break;
-	default:
+	case 2:
 		draw_text(d, 12, 58, "NETWORK AND TIME", 2, aqua);
 		draw_text(d, 12, 100, "ETHERNET ADDRESS", 1, muted);
 		draw_text(d, 12, 118, snap.ipv4, 1, white);
@@ -568,9 +617,36 @@ static void draw_page(struct display *d, int page, const struct config *cfg)
 		draw_text(d, 12, 234, snap.reference, 1, white);
 		draw_text(d, 12, 284, "LOCAL NTP UDP 123", 1, aqua);
 		break;
+	default: {
+		char label[12];
+		draw_text(d, 12, 54, "SATELLITES", 2, aqua);
+		snprintf(line, sizeof(line), "VISIBLE %d  USED %d  QUALITY %d%%",
+			 snap.sat_count, snap.sat_used_count, snap.quality);
+		draw_text(d, 12, 84, line, 1, muted);
+		int shown = snap.sat_count - g_sat_offset;
+		if (shown > 10) shown = 10;
+		for (int i = 0; i < shown; i++) {
+			int k = i + g_sat_offset;
+			int x = 14 + i * 22;
+			int h = snap.sat_snr[k] * 2;
+			static const char constellation[] = { 'G', 'S', 'E', 'C', 'I', 'J', 'R', 'I' };
+			uint16_t color = snap.sat_used[k] ? aqua : muted;
+			if (h > 142) h = 142;
+			rect(d, x, 242 - h, 13, h, color);
+			int gnss = snap.sat_gnss[k];
+			char system = gnss >= 0 && gnss < (int)sizeof(constellation) ? constellation[gnss] : 'U';
+			snprintf(label, sizeof(label), "%c%d", system, snap.sat_prn[k]);
+			draw_text(d, x - 2, 248, label, 1, white);
+		}
+		draw_text(d, 12, 280, "BARS SHOW SIGNAL DBHZ", 1, muted);
+		if (snap.sat_count > 10)
+			draw_text(d, 12, 296, "UP/DOWN SCROLL SATELLITES", 1, aqua);
+		else
+			draw_text(d, 12, 296, "BRIGHT BARS USED IN FIX", 1, aqua);
+		break;
 	}
-
-	draw_text(d, 12, 306, "UP/DOWN: PAGES", 1, muted);
+	}
+	draw_text(d, 12, 306, "UP/DOWN: PAGES  ENTER: NEXT", 1, muted);
 
 	if (flush(d) < 0)
 		fprintf(stderr, "spi: frame transfer failed: %s\n", strerror(errno));
@@ -617,6 +693,44 @@ static void config_load(struct config *cfg)
 	fclose(f);
 }
 
+static int config_save(const struct config *cfg)
+{
+	char text[96];
+	int n = snprintf(text, sizeof(text), "rotation=%d\nbacklight_sleep_time=%d\n",
+			 cfg->rotation, cfg->sleep_seconds);
+	int fd = open(CONFIG_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0)
+		return -1;
+	ssize_t wrote = write(fd, text, (size_t)n);
+	close(fd);
+	return wrote == n ? 0 : -1;
+}
+
+static void draw_settings(struct display *d, int selected, const struct config *cfg)
+{
+	static const uint16_t bg = 0x08a3, aqua = 0x16d5, white = 0xef7d, muted = 0x8d96;
+	char value[40];
+	const char *labels[] = { "ROTATION", "BACKLIGHT TIMER", "EXIT SETTINGS" };
+	rect(d, 0, 0, PANEL_W, PANEL_H, bg);
+	draw_text(d, 12, 18, "DISPLAY SETUP", 2, aqua);
+	for (int i = 0; i < 3; i++) {
+		int y = 88 + i * 64;
+		rect(d, 8, y - 8, PANEL_W - 16, 44, i == selected ? 0x19e7 : bg);
+		draw_text(d, 16, y, labels[i], 1, i == selected ? aqua : white);
+		if (i == 0) {
+			snprintf(value, sizeof(value), "%d", cfg->rotation);
+			draw_text(d, 178, y, value, 1, white);
+		} else if (i == 1) {
+			snprintf(value, sizeof(value), "%d SEC", cfg->sleep_seconds);
+			draw_text(d, 154, y, value, 1, white);
+		}
+	}
+	draw_text(d, 12, 286, "UP/DOWN SELECT ENTER APPLY", 1, muted);
+	draw_text(d, 12, 304, "HOLD UP TO RETURN", 1, muted);
+	if (flush(d) < 0)
+		fprintf(stderr, "spi: settings frame transfer failed: %s\n", strerror(errno));
+}
+
 static int open_keys(void)
 {
 	char path[64];
@@ -634,7 +748,9 @@ static int open_keys(void)
 		    (bits[KEY_UP / (8 * sizeof(unsigned long))] &
 		     (1UL << (KEY_UP % (8 * sizeof(unsigned long))))) &&
 		    (bits[KEY_DOWN / (8 * sizeof(unsigned long))] &
-		     (1UL << (KEY_DOWN % (8 * sizeof(unsigned long))))))
+	     (1UL << (KEY_DOWN % (8 * sizeof(unsigned long))))) &&
+		    (bits[KEY_ENTER / (8 * sizeof(unsigned long))] &
+	     (1UL << (KEY_ENTER % (8 * sizeof(unsigned long))))))
 			return fd;
 
 		close(fd);
@@ -803,6 +919,10 @@ int main(int argc, char **argv)
 	struct sigaction sa;
 	int keys;
 	int page = 0;
+	int in_settings = 0;
+	int setting = 0;
+	int pressed_code = -1;
+	int64_t pressed_us = 0;
 	time_t last_activity;
 	int backlight_on = 1;
 
@@ -865,17 +985,62 @@ int main(int argc, char **argv)
 			struct input_event ev;
 
 			while (read(keys, &ev, sizeof(ev)) == (ssize_t)sizeof(ev)) {
-				if (ev.type != EV_KEY || ev.value != 0)
+				if (ev.type != EV_KEY)
+					continue;
+				if (ev.value == 1) {
+					pressed_code = ev.code;
+					pressed_us = (int64_t)ev.time.tv_sec * 1000000 + ev.time.tv_usec;
+					continue;
+				}
+				if (ev.value != 0 || ev.code != pressed_code)
 					continue;
 				last_activity = time(NULL);
 				if (!backlight_on) {
 					gpio_set(d.backlight, 1);
 					backlight_on = 1;
 				}
-				if (ev.code == KEY_UP)
-					page = (page + 2) % 3;
+				int64_t released_us = (int64_t)ev.time.tv_sec * 1000000 + ev.time.tv_usec;
+				int held = released_us - pressed_us >= 1000000;
+				pressed_code = -1;
+				if (held && ev.code == KEY_DOWN) {
+					in_settings = 1;
+					setting = 0;
+				} else if (held && ev.code == KEY_UP && in_settings) {
+					in_settings = 0;
+				} else if (in_settings) {
+					if (ev.code == KEY_UP)
+						setting = (setting + 2) % 3;
+					else if (ev.code == KEY_DOWN)
+						setting = (setting + 1) % 3;
+					else if (ev.code == KEY_ENTER) {
+						if (setting == 0) {
+							cfg.rotation = (cfg.rotation + 1) % 4;
+							panel_init(&d, &cfg);
+						} else if (setting == 1) {
+							static const int timers[] = { 0, 30, 60, 120, 300 };
+							int next = 0;
+							for (int i = 0; i < 5; i++) {
+								if (timers[i] == cfg.sleep_seconds)
+									next = (i + 1) % 5;
+							}
+							cfg.sleep_seconds = timers[next];
+						}
+						if (setting == 2)
+							in_settings = 0;
+						if (config_save(&cfg) < 0)
+							fprintf(stderr, "settings: cannot save %s: %s\n",
+								CONFIG_PATH, strerror(errno));
+					}
+				} else if (page == 3 && g_sat_count > 10 && ev.code == KEY_UP) {
+					g_sat_offset -= 10;
+					if (g_sat_offset < 0) g_sat_offset = ((g_sat_count - 1) / 10) * 10;
+				} else if (page == 3 && g_sat_count > 10 && ev.code == KEY_DOWN) {
+					g_sat_offset += 10;
+					if (g_sat_offset >= g_sat_count) g_sat_offset = 0;
+				} else if (ev.code == KEY_UP)
+					page = (page + 3) % 4;
 				else if (ev.code == KEY_DOWN || ev.code == KEY_ENTER)
-					page = (page + 1) % 3;
+					page = (page + 1) % 4;
 			}
 		}
 
@@ -885,8 +1050,12 @@ int main(int argc, char **argv)
 			backlight_on = 0;
 		}
 
-		if (backlight_on)
-			draw_page(&d, page, &cfg);
+		if (backlight_on) {
+			if (in_settings)
+				draw_settings(&d, setting, &cfg);
+			else
+				draw_page(&d, page, &cfg);
+		}
 	}
 
 	gpio_set(d.backlight, 0);

@@ -87,10 +87,7 @@ cat /etc/resolv.conf
 ip -4 addr show | grep -c '192.168.88'   # must print 0
 ```
 
-Expected: the WAN interface has its leased IPv4 address; no default route is
-learned from DHCP; no DHCP-provided nameserver appears in the resolver
-configuration. Do not use public DNS or upstream route reachability as a
-pass/fail test for this isolated bench configuration.
+Expected: eth0.2 receives the address and, when supplied, the default route and DNS settings from DHCP. Check the assigned gateway and resolver list against the bench network. LuCI can change WAN to static addressing when required.
 
 Then verify services:
 

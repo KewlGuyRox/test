@@ -20,13 +20,7 @@ OpenWrt while retaining the useful GNSS, NTP, LCD, and management functions.
 
 - **RAM boot only.** No flash writes, `sysupgrade`, `saveenv`, erase, or factory
   image operations. Do not write persistent storage.
-- **Single Ethernet uplink:** WAN port `eth0.2`, DHCP address only.
-- **No DHCP-provided default gateway or DNS.** This is an explicit operator
-  constraint: the laptop also uses the `10.10.50.0/24` network, and installing
-  a DHCP route or DNS can disrupt the operator's other connection. The current
-  checked-in network config has `defaultroute '1'` and `peerdns '1'`; that is
-  a known source-tree blocker and must be corrected to `0` before the image is
-  considered compliant.
+- **Single Ethernet uplink:** WAN port `eth0.2`, ordinary DHCP including gateway and DNS; LuCI can configure static IPv4.
 - No LAN bridge, no `192.168.88.1/24`, and no wireless packages/radio.
 - Keep all UI and system messages in English.
 
@@ -41,7 +35,7 @@ hardware changes.
 | SoC / target | MT7628AN, `ramips/mt76x8` | Vendor DTB |
 | Flash layout | u-boot 0x0; env 0x30000; factory 0x40000; firmware 0x50000 | Flash dump; never write these partitions |
 | Console | `ttyS0`, 57600 8N1 | Vendor chosen bootargs / U-Boot environment |
-| WAN | `eth0.2`, DHCP | Vendor network config; replacement must suppress DHCP route and DNS |
+| WAN | `eth0.2`, DHCP | Vendor network config; replacement accepts normal DHCP route and DNS, with static WAN available in LuCI |
 | Switch VLANs | VLAN1 `1 2 3 4 6t`; VLAN2 `0 6t` | Vendor DTB/config; verify on-device |
 | MAC cells | `…:09` at 0x04, `…:0a` at 0x28, `…:0b` at 0x2e | Flash factory-partition analysis |
 | Deployed WAN MAC | `…:0b` from offset 0x2e | Vendor UCI override; confirm replacement uses this value |
@@ -62,12 +56,7 @@ offset, and the base must be read from the running device's
 `/sys/class/gpio/gpiochip*/base` and matched to the correct MT7628 GPIO
 controller. Do not infer it from the kernel version.
 
-The current renderer attempts runtime base discovery, but its implementation
-must be reviewed: choosing the first gpiochip wide enough for an offset is not
-sufficient proof that it is the SoC GPIO controller. Before hardware testing,
-verify the selected chip by label/device relationship and compare the resulting
-global numbers with the live gpiochip inventory. Prefer the GPIO character-device
-API if practical; do not silently fall back to a guessed chip.
+Before hardware testing, verify the selected chip against live gpiochip labels and device relationships.
 
 GPIO ownership must be exclusive:
 - LCD reset/D-C/backlight: renderer, if the final pin mapping is confirmed.
@@ -77,11 +66,7 @@ Never export a line already owned by a kernel driver.
 
 ### PPS status
 
-Vendor configuration reportedly shipped with `pps_enabled '0'`; PPS is an
-unvalidated capability, not a restored/working feature. Keep GNSS/PPS chrony
-sources `noselect` until the receiver is connected, has a fix, and PPS pulses
-are measured. The antenna is currently disconnected, so no fix or PPS lock is
-expected during antenna-off testing.
+Vendor configuration reportedly shipped with `pps_enabled '0'`; physical PPS remains unvalidated. The replacement config enables GNSS/PPS with NIST and Cloudflare fallbacks. The antenna is disconnected, so no fix or PPS lock is expected during current bench work; validate UART and source selection with the antenna attached.
 
 ## 3. Data architecture
 
@@ -102,19 +87,15 @@ actual `yspeed-status` output before relying on it.
 | Area | Current source state | Qualification |
 |---|---|---|
 | Device tree | `board/mt7628an_yspeed_ys-gps-12832.dts` | Contains SPI CS1 node, keys, PPS, RTC, switch and MAC declarations; compile and inspect final DTB |
-| LCD renderer | `package/yspeed-display/src/yspeed-display.c` | Source exists; GPIO-chip selection, panel init sequence, SPI transfer, rotation and key behavior still require validation on hardware |
+| LCD renderer | `package/yspeed-display/src/yspeed-display.c` | Source includes satellite page and settings key behavior; panel/GPIO operation still needs hardware validation |
 | Status JSON | `files/usr/sbin/yspeed-status` | Source claims satellite/fix fields; test actual output and schema |
 | Chrony | `files/etc/chrony/chrony.conf` | Configuration is not proof of synchronization; test with network and receiver |
-| Network | `files/etc/config/network` | **BLOCKER:** currently enables DHCP default route and peer DNS; must be set to disabled per §1 |
+| Network | `files/etc/config/network` | Standard DHCP route and DNS are enabled; static IPv4 is supported through LuCI |
 | Firewall | `files/etc/config/firewall` | Inspect final rules and verify UDP/123 exposure is intentional |
 | Build gate | `scripts/validate-initramfs.py`, `scripts/validate-uimage.py` | Validators must pass on the exact artifact |
 | CI | `.github/workflows/yspeed-ramboot-build.yml` | Build success and artifact publication are separate states; check run logs/artifacts |
 
-The LCD renderer is not yet vendor-feature parity. Current source provides a
-basic three-page dashboard and basic key navigation. It does **not** yet
-implement the complete vendor settings menu, documented 1-second long-press
-actions, or full satellite-list presentation. Do not describe those features
-as implemented until source and hardware tests prove them.
+The renderer now has a four-page dashboard including shared satellite data, plus a basic display setup menu: hold Down for settings, Up/Down to navigate, Enter to apply, and hold Up to return. Physical keys and panel rendering still require hardware validation. Factory reset and vendor network-mode options are intentionally excluded.
 
 ## 5. Build validation
 
@@ -177,8 +158,7 @@ Never use `saveenv`.
 
 ## 8. Work order
 
-1. Fix WAN DHCP behavior: keep DHCP address acquisition, disable DHCP default
-   route and peer DNS; verify generated runtime routes and resolver files.
+1. Verify ordinary WAN DHCP on eth0.2 accepts the assigned address, gateway and DNS; confirm LuCI can switch to a static address.
 2. Get a green CI build and capture the exact artifact/commit/run evidence.
 3. Validate image format, rootfs contents, DTB, kernel config and package list.
 4. Resolve U-Boot memory layout and approve a safe RAM-boot address.
@@ -186,10 +166,8 @@ Never use `saveenv`.
 6. Validate SPI device and GPIO controller mapping before driving the panel.
 7. Test LCD initialization, orientation, colors, keys, and backlight.
 8. Verify chrony service and NTP client response on the bench network.
-9. With antenna attached only: identify UART, confirm GNSS fix, then validate
-   PPS and only then promote chrony refclocks from `noselect`.
-10. Implement vendor LCD menu/long-press/satellite-list parity and LuCI pages;
-    keep `yspeed-status` as the shared data source.
+9. With antenna attached: identify UART, confirm GNSS fix, and validate PPS lock/source selection against NIST/Cloudflare.
+10. Verify LCD menu, long-press behavior and satellite list; keep `yspeed-status` as the shared data source.
 
 **Safety rule:** no persistent flash writes under any circumstances unless the
 user explicitly changes the project constraint.

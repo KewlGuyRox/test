@@ -7,10 +7,7 @@
 - Target: `ramips/mt76x8`
 - Architecture: `mipsel_24kc`
 - Kernel line in OpenWrt 25.12.6: 6.12.x
-- Packages feed commit: `093d551675b1119a06ef224d419905e8d6b2af1a`
-- LuCI feed commit: `75a306df84a020c57a631ef5b4c02ace56d93387`
+- Packages feed commit: `1a304c1a7031e356c97279c9a4a273f1710f08df` (stable 25.12 branch; Chrony 4.8-r3)
+- LuCI feed commit: `76f7b462d8d842cb392c2902d35af34ee4ae2130` (stable 25.12 branch)
 
-The feeds revisions are taken from the official target's `feeds.buildinfo`.
-The build script records the exact source/feed commit IDs after checkout.
-The current execution environment could not clone source, so no actual build
-commit IDs or compiled artifacts are claimed here.
+The feeds revisions are pinned to the OpenWrt 25.12 stable branch heads on 2026-11-07. The build script records the exact source/feed commit IDs. Earlier checked-in image artifacts are not trusted as build outputs until validated; the tracked uImage was found to contain no initramfs and must not be booted.

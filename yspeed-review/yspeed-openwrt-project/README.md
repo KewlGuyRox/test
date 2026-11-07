@@ -28,22 +28,24 @@ original LVGL executable or an exact reproduction of its screens.
 - MediaTek MT7628AN, ramips/mt76x8; 128 MiB RAM.
 - No build or test command writes to MTD, U-Boot environment, factory data, or
   persistent flash.
-- `eth0.2` is the only operational Layer-3 interface and obtains IPv4 by DHCP.
-  Do not hard-code a gateway or DNS; the bench DHCP server intentionally
-  supplies neither.
+- `eth0.2` is the only operational Layer-3 interface. It uses ordinary DHCP,
+  accepting the network-provided address, gateway and DNS. LuCI can change it
+  to static IPv4 addressing for a rack network.
 - No Layer-3 interface, static address, DHCP server, bridge, or fallback
   management path is created on `eth0.1`.
 - Wired-only: PCIe/WMAC and wireless packages are disabled.
-- GNSS UART1 remains at its existing 9600-baud configuration. The antenna is
-  disconnected, so no satellite fix is expected during bench validation.
-- PPS is GPIO11 active-high. GNSS/PPS Chrony refclocks remain `noselect`
-  until UTC and PPS association are measured.
+- GPSD is configured for `/dev/ttyS1` at 9600 baud; vendor evidence also
+  mentions `/dev/ttyS2`, so the correct UART remains a hardware check. The
+  antenna is disconnected, so no satellite fix is expected during bench work.
+- PPS is GPIO11 active-high. Chrony combines GPS receiver time with PPS. NIST
+  and Cloudflare remain active fallbacks. Verify PPS lock/source selection
+  with the antenna connected before treating the appliance as a precision source.
 - DS1307 RTC is at I2C address 0x68.
 
 ## Build
 
-The build pins OpenWrt v25.12.6 and the package/LuCI feed revisions in
-`feeds.conf`. It validates the network contract, resolved kernel symbols,
+The build pins OpenWrt v25.12.6 and the stable package/LuCI feeds in
+`feeds.conf`, including Chrony 4.8-r3. It validates the network contract, resolved kernel symbols,
 compiled DTB, uImage structure/CRCs, and absence of sysupgrade/factory images.
 
 Run on a supported Linux x86-64 host with at least 30 GB free disk:
@@ -64,4 +66,4 @@ DHCP on eth0.2, `/dev/spidev0.1`, GPIO export/direction, panel reset/backlight,
 visible pixels, button input, RTC, serial GNSS data, and PPS electrical
 activity. No satellite fix is expected until the antenna is connected.
 
-No flash writes are authorized by this project.
+For static addressing, use LuCI Network → Interfaces → WAN and select Static, then enter the rack network address, mask, gateway and DNS. No flash writes are authorized by this project.

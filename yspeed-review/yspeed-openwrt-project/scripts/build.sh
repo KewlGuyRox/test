@@ -36,7 +36,7 @@ for dir in "$SRC/files/etc/uci-defaults" "$SRC/files/etc/hotplug.d/iface" "$SRC/
   [ ! -d "$dir" ] || find "$dir" -type f -exec chmod 0755 {} + 2>/dev/null || true
 done
 
-# DHCP on eth0.2 only; no static management address or eth0.1 L3 interface.
+# Default DHCP on eth0.2; static WAN is available in LuCI, and eth0.1 has no L3 interface.
 NETWORK_CONFIG="$PROJECT_DIR/files/etc/config/network"
 python3 - "$NETWORK_CONFIG" <<'PYNET'
 import shlex, sys
@@ -60,16 +60,14 @@ for number, raw in enumerate(open(path, encoding="utf-8"), 1):
 interfaces=[x for x in sections if x["type"]=="interface"]
 wan=[x for x in interfaces if x["name"]=="wan"]
 if len(wan)!=1 or wan[0]["options"].get("device")!="eth0.2" or wan[0]["options"].get("proto")!="dhcp":
-    raise SystemExit("WAN must be DHCP on eth0.2")
+    raise SystemExit("Factory default WAN must use DHCP on eth0.2")
 for item in interfaces:
     name=item["name"]; opts=item["options"]
     if name=="lan":
         raise SystemExit("LAN Layer-3 interface must not be configured")
-    if name!="loopback" and "ipaddr" in opts:
-        raise SystemExit(f"Static IPv4 address forbidden on interface {name}")
     if name!="loopback" and opts.get("device")=="eth0.1":
         raise SystemExit(f"eth0.1 must not have a Layer-3 interface ({name})")
-print("Network contract OK: only WAN DHCP on eth0.2; no static IPv4 or eth0.1 L3")
+print("Network contract OK: factory default DHCP on eth0.2; no LAN or eth0.1 L3")
 PYNET
 
 make -C "$SRC" defconfig

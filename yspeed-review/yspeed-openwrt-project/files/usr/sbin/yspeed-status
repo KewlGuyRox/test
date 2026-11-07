@@ -122,10 +122,20 @@ stratum="$(printf '%s\n' "$chrony" | sed -n 's/^Stratum:[[:space:]]*//p' | head 
 last_offset="$(printf '%s\n' "$chrony" | sed -n 's/^Last offset[[:space:]]*:[[:space:]]*//p' | head -n1)"
 rms_offset="$(printf '%s\n' "$chrony" | sed -n 's/^RMS offset[[:space:]]*:[[:space:]]*//p' | head -n1)"
 case "$leap" in
-    Normal) ntp_state="SYNCED" ;;
+    Normal)
+        if [ "$stratum" = "10" ]; then ntp_state="HOLDOVER"; else ntp_state="SYNCED"; fi
+        ;;
     "Not synchronised") ntp_state="UNSYNCHRONISED" ;;
     "") ntp_state="CHRONY_UNAVAILABLE" ;;
     *) ntp_state="CHECK" ;;
+esac
+precision_eligible=false
+case "$mode" in
+    2|3)
+        if printf '%s\n' "$sources" | grep -Eq '^#[*+][[:space:]]+PPS([[:space:]]|$)'; then
+            precision_eligible=true
+        fi
+        ;;
 esac
 pps_assert="$(cat /sys/class/pps/pps0/assert 2>/dev/null || true)"
 pps_clear="$(cat /sys/class/pps/pps0/clear 2>/dev/null || true)"
@@ -138,7 +148,7 @@ printf '{'
 printf '"timestamp":'; json_string "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
 printf ',"gnss":{"fix":"%s","mode":' "$fix"; json_number "$mode"
 printf ',"utc":'; json_string "$utc"
-printf ',"utc_reported":%s,"utc_precision_eligible":false' "$utc_reported"
+printf ',"utc_reported":%s,"utc_precision_eligible":%s' "$utc_reported" "$precision_eligible"
 printf ',"latitude":'; json_number "$lat"
 printf ',"longitude":'; json_number "$lon"
 printf ',"altitude_m":'; json_number "$alt"

@@ -1,7 +1,6 @@
 #!/bin/sh
-# DHCP DNS/gateway may arrive after the init scripts start. Restart Chrony
-# after eth0.2 is configured so its NIST/Cloudflare pools resolve with the
-# actual deployment DNS. This does not add routes or DNS to the interface.
+# Restart Chrony after eth0.2 is configured so the NIST/Cloudflare upstreams
+# are reachable using the normal route and DNS supplied by DHCP.
 [ "${ACTION:-}" = "ifup" ] || exit 0
 [ "${INTERFACE:-}" = "wan" ] || exit 0
 [ -x /etc/init.d/chronyd ] || exit 0

@@ -116,11 +116,7 @@ Reported mapping:
 | KEY2 | 23 | `KEY_ENTER` | apply/confirm |
 | KEY3 | 26 | `KEY_DOWN` | select/enter settings on long press |
 
-These mappings and timing behaviors require physical verification. The current
-replacement renderer source has basic three-page navigation; it does **not**
-yet implement the complete settings menu or the documented 1-second long-press
-actions. Full satellite-list presentation is also a parity item, not a completed
-feature.
+These mappings and timing behaviors require physical verification. The renderer source now includes a satellite bars page and a basic display settings menu. Hold Down for settings, use Up/Down to navigate, Enter to apply, and hold Up to return. Physical key timing and LCD output still require device validation.
 
 Reported settings menu items: language, network mode (LAN/WAN), rotation, and
 factory reset. The replacement must remain English-only and single-uplink.
@@ -149,7 +145,7 @@ uses chrony and must verify that it is the only intended NTP server.
 | Vendor JWT stack | replace with LuCI sessions and rpcd ACLs |
 | Wireless pages/radio | wired-only target; disable radio and omit wireless packages |
 | Vendor `ysgps` backend | do not reuse; replace with maintained OpenWrt services and a shared status producer |
-| Vendor LAN mode/bridge | excluded; one WAN uplink only, with no DHCP-provided route or DNS per operator constraint |
+| Vendor LAN mode/bridge | excluded; one WAN uplink only, using ordinary DHCP route/DNS or static WAN addressing |
 
 ## Replacement feature-parity checklist
 
@@ -157,12 +153,12 @@ uses chrony and must verify that it is the only intended NTP server.
 - [ ] GNSS status fields and satellite list verified against live receiver data.
 - [ ] RTC read/write behavior validated without changing persistent flash.
 - [ ] Chrony NTP service verified from an independent LAN client.
-- [ ] PPS validated with antenna/fix; only then enable PPS discipline.
+- [ ] PPS validated with antenna/fix; Chrony source selection and PPS lock must be confirmed on hardware.
 - [ ] LCD SPI0 CS1 and panel initialization validated on hardware.
 - [ ] Correct GPIO controller/base and line ownership validated.
 - [ ] Rotation 3 and English-only display verified.
 - [ ] Three physical keys mapped and debounced correctly.
-- [ ] Settings menu and 1-second long-press behavior implemented and tested.
+- [x] Basic display settings menu and 1-second long-press behavior implemented in source; physical key test required.
 - [ ] Backlight timeout behavior implemented and tested.
-- [ ] WAN DHCP address works without installing a default route or DNS.
+- [x] WAN DHCP accepts the provided route and DNS; LuCI supports static IPv4.
 - [ ] LuCI status/configuration pages expose supported replacement functions.
