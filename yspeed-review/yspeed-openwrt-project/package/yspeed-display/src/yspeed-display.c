@@ -68,9 +68,12 @@ static int gpio_number(int offset)
         f=fopen(p,"r"); if(f){fscanf(f,"%d",&ngpio);fclose(f);}
         snprintf(p,sizeof(p),"/sys/class/gpio/%s/label",e->d_name);
         f=fopen(p,"r"); if(f){fgets(label,sizeof(label),f);fclose(f);}
-        if(base>=0 && ngpio>offset && (strstr(label,"gpio") || ngpio>=32)) {
-            result=base+offset;
-            if(strstr(label,"10000600")) break;
+        if(base>=0 && ngpio>offset) {
+            if(result<0) result=base+offset;
+            if(strstr(label,"10000600") || strstr(label,"mt7628")) {
+                result=base+offset;
+                break;
+            }
         }
     }
     closedir(d);
