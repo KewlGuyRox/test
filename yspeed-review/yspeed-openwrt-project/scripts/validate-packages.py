@@ -10,7 +10,6 @@ a few-second one. It reads the package index OpenWrt has already generated
 (tmp/.packageinfo and tmp/.targetinfo) and cross-checks the profile.
 """
 import os
-import re
 import sys
 
 PROFILE_REL = "target/linux/ramips/image/mt76x8.mk"
@@ -42,15 +41,21 @@ def device_packages(src):
     except StopIteration:
         sys.exit("FAIL: %s block not found in %s" % (DEVICE_MATCH, PROFILE_REL))
 
-    assignment = re.compile(r"^\\s*DEVICE_PACKAGES\\s*:?=\\s*(.*)$")
     for i in range(start, len(lines)):
-        match = assignment.match(lines[i])
-        if not match:
+        line = lines[i].strip()
+        if not line.startswith("DEVICE_PACKAGES"):
             continue
+        value = line[len("DEVICE_PACKAGES"):].lstrip()
+        if value.startswith(":=") or value.startswith("+="):
+            value = value[2:].strip()
+        elif value.startswith("="):
+            value = value[1:].strip()
+        else:
+            continue
+
         parts = []
-        value = match.group(1)
         while True:
-            continued = value.rstrip().endswith("\\")
+            continued = value.rstrip().endswith(chr(92))
             if continued:
                 value = value.rstrip()[:-1]
             parts.append(value.split("#", 1)[0])
@@ -58,6 +63,7 @@ def device_packages(src):
                 break
             i += 1
             value = lines[i].strip()
+
         tokens = " ".join(parts).split()
         # A leading '-' means "remove this from the defaults"; it need not exist.
         return [token for token in tokens if not token.startswith("-")]
