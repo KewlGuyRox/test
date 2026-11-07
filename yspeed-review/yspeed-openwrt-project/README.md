@@ -109,7 +109,9 @@ The script:
   Chrony serves UDP/123 on eth0.2 to clients on any IPv4 subnet reaching that
   interface. The firewall has an explicit UDP/123 allow rule.
 - NIST and Cloudflare are configured as independent network time pools. They
-  can be selected when DNS and routing are available. GPSD SHM and PPS remain
+  can be selected when DNS and routing are available. An Ethernet-ifup hook
+  restarts Chrony after DHCP/static interface configuration so DNS arriving
+  after boot is picked up without hard-coding a resolver. GPSD SHM and PPS remain
   `noselect`; the current build does not claim precision GNSS discipline
   until UTC validity and PPS-to-second association are measured and verified.
 - The live status page is `http://<device-address>/yspeed/`. It reads the
@@ -126,7 +128,7 @@ The script:
 
 Every successful build also publishes `yspeed-rack-update.tar.gz` and its
 SHA-256 file. This bundle contains only the Chrony configuration, status API,
-web UI and updater helper. It deliberately excludes `/etc/config/network` and
+web UI, Ethernet-ifup Chrony hook and updater helper. It deliberately excludes `/etc/config/network` and
 firewall configuration, so a patch cannot overwrite operator-specific static
 IP, gateway, DNS or security settings. It is intended for quick software and
 time-service patches on a running rack unit; it does not contain a kernel or
