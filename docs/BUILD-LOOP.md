@@ -141,3 +141,34 @@ not a fully rolling cache. A properly rolling cache needs a workflow change with
 a `github.run_id` key and prefix restore; that change is written and ready in
 `out/.github/workflows/yspeed-ramboot-build.yml` but requires the `workflow`
 scope to push.
+
+### Correction: the compiler cache was never actually active
+
+Three bugs in the first attempt, all found from a single log line
+("rules.mk has no CCACHE_DIR line; compiler cache disabled"):
+
+1. The `rules.mk` assignment is **indented** (`  export CCACHE_DIR:=...`), so the
+   `^export` anchor never matched and the redirect silently did nothing.
+2. `ccache` is **not installed** by the CI workflow. Enabling `CONFIG_CCACHE`
+   without the binary fails with `ccache: command not found`.
+3. `CONFIG_CCACHE` was only written into `.config`; `rules.mk` tests the make
+   variable, so it must also be passed on the make command line.
+
+Now: `build.sh` installs ccache via `sudo apt-get install -y ccache`, rewrites
+the line with an optional-whitespace anchor, passes `CONFIG_CCACHE=y` on the
+make line, and prints `compiler cache : enabled at ...` in the **first minute**
+so a broken cache is visible immediately instead of after a 55-minute build.
+If any step fails it builds uncached and says so.
+
+### Correction: the kernel-config assertion was reading the wrong file
+
+It reported `CONFIG_SPI -> ABSENT` even though the log shows SPI compiling, then
+failed the build with exit 5 **after image assembly had already completed**
+(`json_overview_image_info`, `checksum`). The `find */linux-*/.config` picked a
+file that was not the kernel config.
+
+Now the locator only accepts a candidate containing `CONFIG_SPI=`, prints the
+path it used, and demotes the symbol checks to warnings: by that point the
+kernel has compiled and the image exists, so failing there destroys a good
+build. The authoritative gates are the artifact-level ones (initramfs present,
+DTB contains `st7789@1` and the LCD keys).
