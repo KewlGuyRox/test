@@ -1,0 +1,89 @@
+#!/bin/sh
+# Read-only YS-GPS-12832 telemetry snapshot. Shared by web UI and diagnostics.
+set -u
+get_json() {
+    jsonfilter -s "$1" -e "@.$2" 2>/dev/null | head -n 1
+}
+json_string() {
+    if [ -z "${1:-}" ] || [ "$1" = "n/a" ] || [ "$1" = "null" ]; then
+        printf 'null'
+    else
+        printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\r//g; s/\n/ /g')"
+    fi
+}
+json_number() {
+    case "${1:-}" in
+        ''|*[!0-9.+-]*) printf 'null' ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+gps_data=""
+if command -v gpspipe >/dev/null 2>&1; then
+    gps_data="$(timeout 2 gpspipe -w -n 80 2>/dev/null || true)"
+fi
+tpv="$(printf '%s\n' "$gps_data" | grep '"TPV"' | tail -n 1)"
+sky="$(printf '%s\n' "$gps_data" | grep '"SKY"' | tail -n 1)"
+mode="$(get_json "$tpv" mode)"
+utc="$(get_json "$tpv" time)"
+lat="$(get_json "$tpv" lat)"
+lon="$(get_json "$tpv" lon)"
+alt="$(get_json "$tpv" alt)"
+speed="$(get_json "$tpv" speed)"
+track="$(get_json "$tpv" track)"
+case "$mode" in
+    3) fix="3D" ;;
+    2) fix="2D" ;;
+    *) fix="NO_FIX" ;;
+esac
+utc_valid=false
+[ -n "$utc" ] && [ "$utc" != "n/a" ] && utc_valid=true
+sat_count="$(printf '%s\n' "$sky" | jsonfilter -e '@.satellites[*].PRN' 2>/dev/null | wc -l | tr -d ' ')"
+chrony="$(chronyc tracking 2>/dev/null || true)"
+sources="$(chronyc sources -v 2>/dev/null || true)"
+leap="$(printf '%s\n' "$chrony" | sed -n 's/^Leap status:[[:space:]]*//p' | head -n1)"
+refid="$(printf '%s\n' "$chrony" | sed -n 's/^Reference ID:[[:space:]]*//p' | head -n1)"
+stratum="$(printf '%s\n' "$chrony" | sed -n 's/^Stratum:[[:space:]]*//p' | head -n1)"
+last_offset="$(printf '%s\n' "$chrony" | sed -n 's/^Last offset[[:space:]]*:[[:space:]]*//p' | head -n1)"
+rms_offset="$(printf '%s\n' "$chrony" | sed -n 's/^RMS offset[[:space:]]*:[[:space:]]*//p' | head -n1)"
+case "$leap" in
+    Normal) ntp_state="SYNCED" ;;
+    "Not synchronised") ntp_state="UNSYNCHRONISED" ;;
+    "") ntp_state="CHRONY_UNAVAILABLE" ;;
+    *) ntp_state="CHECK" ;;
+esac
+pps_assert="$(cat /sys/class/pps/pps0/assert 2>/dev/null || true)"
+pps_clear="$(cat /sys/class/pps/pps0/clear 2>/dev/null || true)"
+rtc="$(hwclock -r 2>/dev/null || true)"
+ip="$(ip -4 -o addr show dev eth0.2 2>/dev/null | awk '{print $4}' | head -n1)"
+gateway="$(ip -4 route show default 2>/dev/null | awk '{print $3}' | head -n1)"
+dns="$(awk '/^nameserver[[:space:]]/{printf "%s%s",sep,$2;sep=" "}' /tmp/resolv.conf.d/resolv.conf.auto 2>/dev/null)"
+uptime="$(cut -d' ' -f1 /proc/uptime 2>/dev/null)"
+printf '{'
+printf '"timestamp":'; json_string "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+printf ',"gnss":{"fix":"%s","mode":' "$fix"; json_number "$mode"
+printf ',"utc":'; json_string "$utc"
+printf ',"utc_valid":%s' "$utc_valid"
+printf ',"latitude":'; json_number "$lat"
+printf ',"longitude":'; json_number "$lon"
+printf ',"altitude_m":'; json_number "$alt"
+printf ',"speed_mps":'; json_number "$speed"
+printf ',"course_deg":'; json_number "$track"
+printf ',"satellites_reported":'; json_number "$sat_count"
+printf '}'
+printf ',"ntp":{"state":"%s","reference":' "$ntp_state"; json_string "$refid"
+printf ',"stratum":'; json_number "$stratum"
+printf ',"leap_status":'; json_string "$leap"
+printf ',"last_offset":'; json_string "$last_offset"
+printf ',"rms_offset":'; json_string "$rms_offset"
+printf ',"tracking":'; json_string "$chrony"
+printf ',"sources":'; json_string "$sources"
+printf '}'
+printf ',"pps":{"device":%s,"assert":' "$([ -e /dev/pps0 ] && echo true || echo false)"
+json_string "$pps_assert"
+printf ',"clear":'; json_string "$pps_clear"; printf '}'
+printf ',"rtc":'; json_string "$rtc"
+printf ',"network":{"interface":"eth0.2","ipv4":'; json_string "$ip"
+printf ',"gateway":'; json_string "$gateway"
+printf ',"dns":'; json_string "$dns"; printf '}'
+printf ',"uptime_seconds":'; json_number "$uptime"
+printf '}\n'
