@@ -11,8 +11,6 @@ config zone
         option input 'REJECT'
         option output 'ACCEPT'
         option forward 'REJECT'
-        option masq '1'
-        option mtu_fix '1'
 
 config rule
         option name 'Allow-DHCP-Renew'
@@ -98,13 +96,6 @@ config include
         option path '/etc/firewall.user'
 
 config rule
-        option name 'Allow-WAN-to-88'
-        option src 'wan'
-        option proto 'tcp'
-        option dest_port '88'
-        option target 'ACCEPT'
-
-config rule
         option name 'Allow-WAN-to-80'
         option src 'wan'
         option proto 'tcp'
@@ -125,16 +116,3 @@ config rule
         option proto 'udp'
         option target 'ACCEPT'
 
-config rule
-        option name 'Allow-AllinOne-Listen'
-        option src 'wan'
-        option proto 'udp'
-        option dest_port '8333'
-        option target 'ACCEPT'
-
-config rule
-        option name 'Allow-AllinOne-Response'
-        option src 'wan'
-        option proto 'udp'
-        option dest_port '8222'
-        option target 'ACCEPT'
