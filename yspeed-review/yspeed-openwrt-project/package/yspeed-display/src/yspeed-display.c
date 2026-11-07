@@ -133,11 +133,14 @@ static int json_bool_value(const char *json, const char *key) {
 }
 
 static void get_shared_status(struct telemetry *t) {
+    memset(t, 0, sizeof(*t));
     snprintf(t->fix, sizeof(t->fix), "NO TELEMETRY");
     snprintf(t->utc, sizeof(t->utc), "UNAVAILABLE");
     snprintf(t->ntp, sizeof(t->ntp), "UNAVAILABLE");
     snprintf(t->ref, sizeof(t->ref), "NONE");
     snprintf(t->leap, sizeof(t->leap), "UNKNOWN");
+    snprintf(t->last_offset, sizeof(t->last_offset), "UNAVAILABLE");
+    snprintf(t->rms_offset, sizeof(t->rms_offset), "UNAVAILABLE");
     snprintf(t->ip, sizeof(t->ip), "UNAVAILABLE");
     snprintf(t->gateway, sizeof(t->gateway), "UNAVAILABLE");
     snprintf(t->dns, sizeof(t->dns), "UNAVAILABLE");
