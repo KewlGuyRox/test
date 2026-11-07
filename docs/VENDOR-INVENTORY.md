@@ -122,13 +122,18 @@ Reported settings menu items: language, network mode (LAN/WAN), rotation, and
 factory reset. The replacement must remain English-only and single-uplink.
 Do not implement factory reset or any other persistent flash-writing action.
 
+## PPS evidence and interpretation
+
+The vendor UCI capture's `pps_enabled '0'` setting is a configuration fact, not proof that the receiver lacked a PPS output. On November 4, 2026, while the receiver had a 3D fix, 18 visible satellites, and reported `ANTENNA OK`, the running system recorded consecutive `/dev/pps0` assertions at `1793832431.508000420#245936`, `1793832432.507999592#245937`, and `1793832433.508000219#245938`. A later sysfs assertion was `1793832435.508000293#245940`; another event was `1793832522.508002169#246027`. The ~1 Hz sequence demonstrates electrical activity reaching the kernel PPS capture path. It does not provide an oscilloscope measurement of pulse voltage/shape or establish that the pulse edge was UTC-aligned. The replacement image must preserve this behavior, and Chrony PPS discipline/lock is a separate acceptance test.
+
 ## Non-web services
 
 Recovered service/init-script names include:
 
 - `usemode` — vendor network mode setup, including a DHCP-WAN mode.
 - `gps-timesync` — gpsd-driven time synchronization; captured config reportedly
-  had PPS disabled.
+  had PPS disabled, although November 4, 2026 runtime testing with a healthy
+  receiver demonstrated recurring kernel PPS assertions on `/dev/pps0`.
 - `ys-ntp` — vendor NTP daemon/service.
 - `rtc-boot`, `flash-id-password`, `bootcount`, and
   `openwrt-allinone`.
@@ -145,7 +150,7 @@ uses chrony and must verify that it is the only intended NTP server.
 | Vendor JWT stack | replace with LuCI sessions and rpcd ACLs |
 | Wireless pages/radio | wired-only target; disable radio and omit wireless packages |
 | Vendor `ysgps` backend | do not reuse; replace with maintained OpenWrt services and a shared status producer |
-| Vendor LAN mode/bridge | excluded; one WAN uplink only, using ordinary DHCP route/DNS or static WAN addressing |
+| Vendor LAN mode/bridge | excluded; one WAN uplink only, using DHCP address-only (no DHCP default route or DNS) or static WAN addressing |
 
 ## Replacement feature-parity checklist
 
@@ -153,7 +158,8 @@ uses chrony and must verify that it is the only intended NTP server.
 - [ ] GNSS status fields and satellite list verified against live receiver data.
 - [ ] RTC read/write behavior validated without changing persistent flash.
 - [ ] Chrony NTP service verified from an independent LAN client.
-- [ ] PPS validated with antenna/fix; Chrony source selection and PPS lock must be confirmed on hardware.
+- [x] Historical physical PPS path verified November 4, 2026: with GNSS 3D fix, 18 visible satellites, and `ANTENNA OK`, `ppstest /dev/pps0` captured consecutive ~1 Hz assertions (`1793832431.508000420#245936`, `1793832432.507999592#245937`, `1793832433.508000219#245938`). This confirms recurring electrical edges reached the Linux PPS path; no oscilloscope pulse-shape/voltage or UTC phase measurement was recorded.
+- [ ] Repeat PPS assertions on the current replacement build; separately confirm Chrony PPS source selection and lock on hardware.
 - [ ] LCD SPI0 CS1 and panel initialization validated on hardware.
 - [ ] Correct GPIO controller/base and line ownership validated.
 - [ ] Rotation 3 and English-only display verified.
