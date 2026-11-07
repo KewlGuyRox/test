@@ -106,13 +106,15 @@ fi
 
 # Pin feed revisions using the official 25.12.6 feeds.buildinfo snapshot.
 (cd "$SRC" && ./scripts/feeds update packages luci && \
- ./scripts/feeds install -p packages gpsd chrony && \
+ ./scripts/feeds install -p packages gpsd gpsd-clients chrony && \
  ./scripts/feeds install -p luci luci-light luci-mod-network luci-mod-status luci-mod-system luci-ssl luci-theme-bootstrap)
 
 cp "$PROJECT_DIR/config/ramips-mt76x8-yspeed.config" "$SRC/.config"
 cp -a "$PROJECT_DIR/files/." "$SRC/files/"
-# UCI defaults must be executable in the image.
-find "$SRC/files/etc/uci-defaults" -type f -exec chmod 0755 {} + 2>/dev/null || true
+# Executable first-boot scripts, local telemetry helpers and CGI endpoint.
+for dir in "$SRC/files/etc/uci-defaults" "$SRC/files/usr/sbin" "$SRC/files/www/cgi-bin"; do
+  [ ! -d "$dir" ] || find "$dir" -type f -exec chmod 0755 {} + 2>/dev/null || true
+done
 
 # Enforce the owner's network contract before resolving the OpenWrt config:
 # eth0.2 is the only Layer-3 interface and receives its address via DHCP.
@@ -165,7 +167,7 @@ fi
 if ! grep -q '^CONFIG_TARGET_DEVICE_ramips_mt76x8_DEVICE_yspeed_ys-gps-12832=y$' "$SRC/.config"; then
   echo "YSPEED profile is not selected in .config" >&2; exit 4
 fi
-for package in kmod-fb-tft-yspeed kmod-fb-tft-st7789v-yspeed yspeed-display kmod-gpio-button-hotplug dropbear uhttpd; do
+for package in kmod-fb-tft-yspeed kmod-fb-tft-st7789v-yspeed yspeed-display kmod-gpio-button-hotplug dropbear uhttpd gpsd gpsd-clients chrony jsonfilter; do
   if ! grep -q "^CONFIG_PACKAGE_${package}=y$" "$SRC/.config"; then
     echo "Required ST7789/display package was dropped by defconfig: $package" >&2
     exit 4
@@ -200,6 +202,12 @@ done
 cp "$IMAGE" "$WORKDIR/artifacts/yspeed-ramboot.uImage"
 python3 "$PROJECT_DIR/scripts/validate-uimage.py" "$WORKDIR/artifacts/yspeed-ramboot.uImage" \
   | tee "$WORKDIR/artifacts/uimage-validation.txt"
+
+# Publish a checksummed rootfs-overlay patch bundle for quick rack-side
+# updates. Applying this bundle changes the running filesystem only; it does
+# not write MTD and is not a substitute for a later reviewed sysupgrade.
+tar -czf "$WORKDIR/artifacts/yspeed-rack-update.tar.gz" -C "$PROJECT_DIR/files" .
+sha256sum "$WORKDIR/artifacts/yspeed-rack-update.tar.gz" > "$WORKDIR/artifacts/yspeed-rack-update.tar.gz.sha256"
 
 # Enforce that no flashable output is published by this RAM-only profile.
 if find "$OUT" -maxdepth 1 -type f \( -name '*yspeed*sysupgrade*' -o -name '*yspeed*factory*' \) | grep -q .; then
