@@ -150,15 +150,35 @@ ST7789_SOURCE="$(find "$SRC/build_dir/target-mipsel_24kc_musl/linux-ramips_mt76x
   echo "ST7789V kernel source not found after target/linux/prepare" >&2
   exit 4
 }
-grep -qxF '#define HSD20_IPS 1' "$ST7789_SOURCE" || {
-  echo "Unexpected upstream ST7789V source; refusing unreviewed edit" >&2
-  exit 4
-}
-sed -i 's/^#define HSD20_IPS 1$/#define HSD20_IPS 0/' "$ST7789_SOURCE"
-grep -qxF '#define HSD20_IPS 0' "$ST7789_SOURCE" || {
-  echo "Failed to select generic ST7789V initialization profile" >&2
-  exit 4
-}
+# Apply a small, explicit panel-init correction to the upstream driver:
+# - avoid the HSD20-specific power/gamma profile (the YSPEED panel is not
+#   identified as HSD20 IPS);
+# - use the generic ST7789V gamma table;
+# - issue software reset and allow the controller's reset cycle to complete
+#   before Sleep Out. The physical reset GPIO is still asserted by FBTFT.
+python3 - "$ST7789_SOURCE" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+required = [
+    "#define HSD20_IPS 1",
+    ".gamma = HSD20_IPS_GAMMA,",
+    "\tpar->fbtftops.reset(par);\n\n\trc = init_tearing_effect_line(par);",
+]
+for item in required:
+    if item not in s:
+        raise SystemExit("Unexpected ST7789V source; missing patch anchor: " + repr(item))
+s = s.replace("#define HSD20_IPS 1", "#define HSD20_IPS 0", 1)
+s = s.replace(".gamma = HSD20_IPS_GAMMA,", ".gamma = DEFAULT_GAMMA,", 1)
+s = s.replace(
+    "\tpar->fbtftops.reset(par);\n\n\trc = init_tearing_effect_line(par);",
+    "\tpar->fbtftops.reset(par);\n\twrite_reg(par, MIPI_DCS_SOFT_RESET);\n\tmdelay(150);\n\n\trc = init_tearing_effect_line(par);",
+    1,
+)
+p.write_text(s)
+if "#define HSD20_IPS 0" not in s or ".gamma = DEFAULT_GAMMA," not in s or "MIPI_DCS_SOFT_RESET" not in s:
+    raise SystemExit("ST7789V panel-init patch did not apply completely")
+PY
 
 # Hard guard: this project must not produce a flash/sysupgrade/factory image.
 if ! grep -q '^CONFIG_TARGET_ROOTFS_INITRAMFS=y$' "$SRC/.config"; then
@@ -173,7 +193,155 @@ for package in kmod-fb-tft-yspeed kmod-fb-tft-st7789v-yspeed yspeed-display kmod
     exit 4
   fi
 done
-if grep -Eq '^CONFIG_PACKAGE_(wpad[^=]*|iw|kmod-mt7603(e)?|kmod-mac80211|kmod-mt76-core|wireless-regdb)=(y|m)$' "$SRC/.config"; then
+if grep -q '^CONFIG_PACKAGE_kmod-gpio-button-hotplug=y
+  echo "Wireless package selected in wired-only build config" >&2
+  grep -E '^CONFIG_PACKAGE_(wpad[^=]*|iw|kmod-mt7603(e)?|kmod-mac80211|kmod-mt76-core|wireless-regdb)=(y|m)$' "$SRC/.config" >&2 || true
+  exit 4
+fi
+
+make -C "$SRC" -j"$JOBS" V=s
+
+OUT="$SRC/bin/targets/ramips/mt76x8"
+IMAGE="$(find "$OUT" -maxdepth 1 -type f -name '*yspeed_ys-gps-12832-initramfs-kernel.bin' -print -quit)"
+[[ -n "$IMAGE" && -f "$IMAGE" ]] || { echo "Expected initramfs uImage not found under $OUT" >&2; exit 5; }
+
+# Verify compiled DTB with the host dtc built by OpenWrt.
+DTC="$SRC/staging_dir/host/bin/dtc"
+if [[ ! -x "$DTC" ]]; then
+  DTC="$(find "$SRC/build_dir/target-mipsel_24kc_musl/linux-ramips_mt76x8" \
+    -type f -path '*/scripts/dtc/dtc' -perm -111 -print -quit 2>/dev/null)"
+fi
+DTB="$(find "$SRC/build_dir" -type f -name 'image-mt7628an_yspeed_ys-gps-12832.dtb' -print -quit)"
+[[ -x "$DTC" && -n "$DTB" ]] || { echo "Compiled DTB or host dtc not found" >&2; exit 6; }
+mkdir -p "$WORKDIR/artifacts"
+"$DTC" -I dtb -O dts "$DTB" > "$WORKDIR/artifacts/yspeed-compiled.dts"
+for token in 'YSPEED YS-GPS-12832' 'pps-gpio' 'dallas,ds1307' 'denx,uimage' 'yspeed,ys-gps-12832' 'mac-address@2e' 'sitronix,st7789v' 'display@1' 'pinctrl-0' 'LCD Up' 'LCD Enter' 'LCD Down'; do
+  grep -qF "$token" "$WORKDIR/artifacts/yspeed-compiled.dts" || { echo "DTB check missing: $token" >&2; exit 7; }
+done
+
+cp "$IMAGE" "$WORKDIR/artifacts/yspeed-ramboot.uImage"
+python3 "$PROJECT_DIR/scripts/validate-uimage.py" "$WORKDIR/artifacts/yspeed-ramboot.uImage" \
+  | tee "$WORKDIR/artifacts/uimage-validation.txt"
+
+# Publish a checksummed rootfs-overlay patch bundle for quick rack-side
+# updates. Applying this bundle changes the running filesystem only; it does
+# not write MTD and is not a substitute for a later reviewed sysupgrade.
+chmod 0755 "$PROJECT_DIR/files/usr/sbin/yspeed-status" \
+  "$PROJECT_DIR/files/usr/sbin/yspeed-apply-update" \
+  "$PROJECT_DIR/files/www/cgi-bin/yspeed-status" \
+  "$PROJECT_DIR/files/etc/uci-defaults/"* 2>/dev/null || true
+UPDATE_ROOT="$WORKDIR/yspeed-rack-update-root"
+rm -rf "$UPDATE_ROOT"
+mkdir -p "$UPDATE_ROOT/etc/chrony" "$UPDATE_ROOT/etc/hotplug.d/iface" \
+  "$UPDATE_ROOT/usr/sbin" "$UPDATE_ROOT/www/cgi-bin" "$UPDATE_ROOT/www/yspeed"
+# Deliberately exclude /etc/config/network and firewall so a rack-side patch
+# can never overwrite operator-specific IP, gateway, DNS or security settings.
+cp "$PROJECT_DIR/files/etc/chrony/chrony.conf" "$UPDATE_ROOT/etc/chrony/"
+cp "$PROJECT_DIR/files/etc/hotplug.d/iface/95-yspeed-chrony" "$UPDATE_ROOT/etc/hotplug.d/iface/"
+cp "$PROJECT_DIR/files/usr/sbin/yspeed-status" "$UPDATE_ROOT/usr/sbin/"
+cp "$PROJECT_DIR/files/usr/sbin/yspeed-apply-update" "$UPDATE_ROOT/usr/sbin/"
+cp "$PROJECT_DIR/files/www/cgi-bin/yspeed-status" "$UPDATE_ROOT/www/cgi-bin/"
+cp "$PROJECT_DIR/files/www/yspeed/index.html" "$UPDATE_ROOT/www/yspeed/"
+tar -czf "$WORKDIR/artifacts/yspeed-rack-update.tar.gz" -C "$UPDATE_ROOT" .
+sha256sum "$WORKDIR/artifacts/yspeed-rack-update.tar.gz" > "$WORKDIR/artifacts/yspeed-rack-update.tar.gz.sha256"
+
+# Enforce that no flashable output is published by this RAM-only profile.
+if find "$OUT" -maxdepth 1 -type f \( -name '*yspeed*sysupgrade*' -o -name '*yspeed*factory*' \) | grep -q .; then
+  echo "Unexpected flashable YSPEED image was generated; refusing to publish." >&2
+  exit 8
+fi
+
+{
+  echo "OpenWrt tag: $TAG"
+  echo "OpenWrt commit: $(git -C "$SRC" rev-parse HEAD)"
+  echo "Packages feed: $(git -C "$SRC/feeds/packages" rev-parse HEAD)"
+  echo "LuCI feed: $(git -C "$SRC/feeds/luci" rev-parse HEAD)"
+  echo "DTS SHA256: $(sha256sum "$PROJECT_DIR/board/mt7628an_yspeed_ys-gps-12832.dts" | awk '{print $1}')"
+  echo "uImage SHA256: $(sha256sum "$WORKDIR/artifacts/yspeed-ramboot.uImage" | awk '{print $1}')"
+  echo "Build UTC: $(date -u +%FT%TZ)"
+  echo "Output is RAM-boot-only; do not flash."
+} > "$WORKDIR/artifacts/build-manifest.txt"
+
+echo "Build complete. RAM-only artifact: $WORKDIR/artifacts/yspeed-ramboot.uImage"
+echo "Compiled DTB source dump: $WORKDIR/artifacts/yspeed-compiled.dts"
+echo "No sysupgrade/factory image is published."
+ "$SRC/.config"; then
+  echo "Conflicting vendor gpio-button-hotplug module selected; use gpio-keys + evdev only" >&2
+  exit 4
+fi
+if grep -Eq '^CONFIG_PACKAGE_(wpad[^=]*|iw|kmod-mt7603(e)?|kmod-mac80211|kmod-mt76-core|wireless-regdb)=(y|m)
+  echo "Wireless package selected in wired-only build config" >&2
+  grep -E '^CONFIG_PACKAGE_(wpad[^=]*|iw|kmod-mt7603(e)?|kmod-mac80211|kmod-mt76-core|wireless-regdb)=(y|m)$' "$SRC/.config" >&2 || true
+  exit 4
+fi
+
+make -C "$SRC" -j"$JOBS" V=s
+
+OUT="$SRC/bin/targets/ramips/mt76x8"
+IMAGE="$(find "$OUT" -maxdepth 1 -type f -name '*yspeed_ys-gps-12832-initramfs-kernel.bin' -print -quit)"
+[[ -n "$IMAGE" && -f "$IMAGE" ]] || { echo "Expected initramfs uImage not found under $OUT" >&2; exit 5; }
+
+# Verify compiled DTB with the host dtc built by OpenWrt.
+DTC="$SRC/staging_dir/host/bin/dtc"
+if [[ ! -x "$DTC" ]]; then
+  DTC="$(find "$SRC/build_dir/target-mipsel_24kc_musl/linux-ramips_mt76x8" \
+    -type f -path '*/scripts/dtc/dtc' -perm -111 -print -quit 2>/dev/null)"
+fi
+DTB="$(find "$SRC/build_dir" -type f -name 'image-mt7628an_yspeed_ys-gps-12832.dtb' -print -quit)"
+[[ -x "$DTC" && -n "$DTB" ]] || { echo "Compiled DTB or host dtc not found" >&2; exit 6; }
+mkdir -p "$WORKDIR/artifacts"
+"$DTC" -I dtb -O dts "$DTB" > "$WORKDIR/artifacts/yspeed-compiled.dts"
+for token in 'YSPEED YS-GPS-12832' 'pps-gpio' 'dallas,ds1307' 'denx,uimage' 'yspeed,ys-gps-12832' 'mac-address@2e' 'sitronix,st7789v' 'display@1' 'pinctrl-0' 'LCD Up' 'LCD Enter' 'LCD Down'; do
+  grep -qF "$token" "$WORKDIR/artifacts/yspeed-compiled.dts" || { echo "DTB check missing: $token" >&2; exit 7; }
+done
+
+cp "$IMAGE" "$WORKDIR/artifacts/yspeed-ramboot.uImage"
+python3 "$PROJECT_DIR/scripts/validate-uimage.py" "$WORKDIR/artifacts/yspeed-ramboot.uImage" \
+  | tee "$WORKDIR/artifacts/uimage-validation.txt"
+
+# Publish a checksummed rootfs-overlay patch bundle for quick rack-side
+# updates. Applying this bundle changes the running filesystem only; it does
+# not write MTD and is not a substitute for a later reviewed sysupgrade.
+chmod 0755 "$PROJECT_DIR/files/usr/sbin/yspeed-status" \
+  "$PROJECT_DIR/files/usr/sbin/yspeed-apply-update" \
+  "$PROJECT_DIR/files/www/cgi-bin/yspeed-status" \
+  "$PROJECT_DIR/files/etc/uci-defaults/"* 2>/dev/null || true
+UPDATE_ROOT="$WORKDIR/yspeed-rack-update-root"
+rm -rf "$UPDATE_ROOT"
+mkdir -p "$UPDATE_ROOT/etc/chrony" "$UPDATE_ROOT/etc/hotplug.d/iface" \
+  "$UPDATE_ROOT/usr/sbin" "$UPDATE_ROOT/www/cgi-bin" "$UPDATE_ROOT/www/yspeed"
+# Deliberately exclude /etc/config/network and firewall so a rack-side patch
+# can never overwrite operator-specific IP, gateway, DNS or security settings.
+cp "$PROJECT_DIR/files/etc/chrony/chrony.conf" "$UPDATE_ROOT/etc/chrony/"
+cp "$PROJECT_DIR/files/etc/hotplug.d/iface/95-yspeed-chrony" "$UPDATE_ROOT/etc/hotplug.d/iface/"
+cp "$PROJECT_DIR/files/usr/sbin/yspeed-status" "$UPDATE_ROOT/usr/sbin/"
+cp "$PROJECT_DIR/files/usr/sbin/yspeed-apply-update" "$UPDATE_ROOT/usr/sbin/"
+cp "$PROJECT_DIR/files/www/cgi-bin/yspeed-status" "$UPDATE_ROOT/www/cgi-bin/"
+cp "$PROJECT_DIR/files/www/yspeed/index.html" "$UPDATE_ROOT/www/yspeed/"
+tar -czf "$WORKDIR/artifacts/yspeed-rack-update.tar.gz" -C "$UPDATE_ROOT" .
+sha256sum "$WORKDIR/artifacts/yspeed-rack-update.tar.gz" > "$WORKDIR/artifacts/yspeed-rack-update.tar.gz.sha256"
+
+# Enforce that no flashable output is published by this RAM-only profile.
+if find "$OUT" -maxdepth 1 -type f \( -name '*yspeed*sysupgrade*' -o -name '*yspeed*factory*' \) | grep -q .; then
+  echo "Unexpected flashable YSPEED image was generated; refusing to publish." >&2
+  exit 8
+fi
+
+{
+  echo "OpenWrt tag: $TAG"
+  echo "OpenWrt commit: $(git -C "$SRC" rev-parse HEAD)"
+  echo "Packages feed: $(git -C "$SRC/feeds/packages" rev-parse HEAD)"
+  echo "LuCI feed: $(git -C "$SRC/feeds/luci" rev-parse HEAD)"
+  echo "DTS SHA256: $(sha256sum "$PROJECT_DIR/board/mt7628an_yspeed_ys-gps-12832.dts" | awk '{print $1}')"
+  echo "uImage SHA256: $(sha256sum "$WORKDIR/artifacts/yspeed-ramboot.uImage" | awk '{print $1}')"
+  echo "Build UTC: $(date -u +%FT%TZ)"
+  echo "Output is RAM-boot-only; do not flash."
+} > "$WORKDIR/artifacts/build-manifest.txt"
+
+echo "Build complete. RAM-only artifact: $WORKDIR/artifacts/yspeed-ramboot.uImage"
+echo "Compiled DTB source dump: $WORKDIR/artifacts/yspeed-compiled.dts"
+echo "No sysupgrade/factory image is published."
+ "$SRC/.config"; then
   echo "Wireless package selected in wired-only build config" >&2
   grep -E '^CONFIG_PACKAGE_(wpad[^=]*|iw|kmod-mt7603(e)?|kmod-mac80211|kmod-mt76-core|wireless-regdb)=(y|m)$' "$SRC/.config" >&2 || true
   exit 4
