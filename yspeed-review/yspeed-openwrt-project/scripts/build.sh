@@ -111,6 +111,10 @@ done
 OUT="$SRC/bin/targets/ramips/mt76x8"
 IMAGE="$(find "$OUT" -maxdepth 1 -type f -name '*yspeed_ys-gps-12832-initramfs-kernel.bin' -print -quit)"
 [[ -n "$IMAGE" && -f "$IMAGE" ]] || { echo "Expected initramfs uImage not found" >&2; exit 7; }
+# A kernel-only image passes every CRC check and is still named
+# "*-initramfs-kernel.bin", but it panics at boot with "VFS: Cannot open root
+# device" because there is no initramfs to mount. Refuse to publish one.
+python3 "$PROJECT_DIR/scripts/validate-initramfs.py" "$IMAGE"
 DTC="$SRC/staging_dir/host/bin/dtc"
 DTB="$(find "$SRC/build_dir" -type f -name 'image-mt7628an_yspeed_ys-gps-12832.dtb' -print -quit)"
 [[ -x "$DTC" && -n "$DTB" ]] || { echo "Compiled DTB or host dtc not found" >&2; exit 8; }

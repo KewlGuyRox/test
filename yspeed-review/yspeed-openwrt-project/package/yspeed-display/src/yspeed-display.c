@@ -1,299 +1,897 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * YSPEED YS-GPS-12832 userspace ST7789 dashboard.
+ *
+ * Hardware facts this file depends on (verified from the vendor DTB, the
+ * captured /proc snapshots and the vendor LVGL binary):
+ *
+ *   SPI      : hardware MT7621 SPI, CS1, 40 MHz  -> /dev/spidev0.1
+ *   LCD D/C  : GPIO16   (SoC pin offset, not a sysfs number)
+ *   LCD RESET: GPIO14
+ *   BACKLIGHT: GPIO19
+ *   Panel    : 240x320, ST7789, mounted at rotation 270 in the enclosure
+ *
+ * GPIO offsets are converted to sysfs numbers at runtime by reading
+ * /sys/class/gpio/gpiochipN/base. The vendor kernel used base 480 (so pin 16
+ * was 496); mainline 6.12 uses base 0 (pin 16 is 16). Hardcoding either one
+ * breaks the other, which is exactly why the vendor binary cannot run here.
+ *
+ * Keys are owned by the kernel via gpio-keys (GPIO18/23/26) and read through
+ * evdev. This program must never export those pins - doing so fails with
+ * EBUSY and kills the buttons.
+ */
 #define _DEFAULT_SOURCE
-#include <arpa/inet.h>
+
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input.h>
 #include <linux/spi/spidev.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <sys/socket.h>
+#include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
 
-#define W 240
-#define H 320
+#define PANEL_W 240
+#define PANEL_H 320
+
 #define SPI_HZ 40000000
+#define SPI_CHUNK 4096
+
 #define GPIO_DC_OFFSET 16
 #define GPIO_RESET_OFFSET 14
 #define GPIO_BACKLIGHT_OFFSET 19
 
-static const uint8_t font[40][5] = {
- {0x7e,0x11,0x11,0x11,0x7e},{0x7f,0x49,0x49,0x49,0x36},
- {0x3e,0x41,0x41,0x41,0x22},{0x7f,0x41,0x41,0x22,0x1c},
- {0x7f,0x49,0x49,0x49,0x41},{0x7f,0x09,0x09,0x09,0x01},
- {0x3e,0x41,0x49,0x49,0x7a},{0x7f,0x08,0x08,0x08,0x7f},
- {0x00,0x41,0x7f,0x41,0x00},{0x20,0x40,0x41,0x3f,0x01},
- {0x7f,0x08,0x14,0x22,0x41},{0x7f,0x40,0x40,0x40,0x40},
- {0x7f,0x02,0x0c,0x02,0x7f},{0x7f,0x04,0x08,0x10,0x7f},
- {0x3e,0x41,0x41,0x41,0x3e},{0x7f,0x09,0x09,0x09,0x06},
- {0x3e,0x41,0x51,0x21,0x5e},{0x7f,0x09,0x19,0x29,0x46},
- {0x46,0x49,0x49,0x49,0x31},{0x01,0x01,0x7f,0x01,0x01},
- {0x3f,0x40,0x40,0x40,0x3f},{0x1f,0x20,0x40,0x20,0x1f},
- {0x3f,0x40,0x38,0x40,0x3f},{0x63,0x14,0x08,0x14,0x63},
- {0x07,0x08,0x70,0x08,0x07},{0x61,0x51,0x49,0x45,0x43},
- {0x3e,0x51,0x49,0x45,0x3e},{0x00,0x42,0x7f,0x40,0x00},
- {0x42,0x61,0x51,0x49,0x46},{0x21,0x41,0x45,0x4b,0x31},
- {0x18,0x14,0x12,0x7f,0x10},{0x27,0x45,0x45,0x45,0x39},
- {0x3c,0x4a,0x49,0x49,0x30},{0x01,0x71,0x09,0x05,0x03},
- {0x36,0x49,0x49,0x49,0x36},{0x06,0x49,0x49,0x29,0x1e},
- {0,0,0,0,0},{0,0,0x14,0,0},{0,0x60,0x60,0,0},{0x08,0x08,0x08,0x08,0x08}
+#define CONFIG_PATH "/etc/lvgl_st7789.conf"
+#define STATUS_BIN "/usr/sbin/yspeed-status"
+#define STATUS_JSON_MAX 8192
+
+static volatile sig_atomic_t g_running = 1;
+
+struct display {
+	int spi;
+	int dc;
+	int reset;
+	int backlight;
+	uint16_t pixels[PANEL_W * PANEL_H];
 };
 
-struct display { int spi, dc, reset, backlight; uint16_t *pixels; };
+struct config {
+	int rotation;      /* 0..3, matches the vendor lcd_rotation option */
+	int sleep_seconds; /* 0 = never blank the backlight */
+	int english;
+};
+
+/* 5x7 column-major font: A-Z, 0-9, space, colon, dot, hyphen. */
+static const uint8_t font[40][5] = {
+	{0x7e, 0x11, 0x11, 0x11, 0x7e}, {0x7f, 0x49, 0x49, 0x49, 0x36},
+	{0x3e, 0x41, 0x41, 0x41, 0x22}, {0x7f, 0x41, 0x41, 0x22, 0x1c},
+	{0x7f, 0x49, 0x49, 0x49, 0x41}, {0x7f, 0x09, 0x09, 0x09, 0x01},
+	{0x3e, 0x41, 0x49, 0x49, 0x7a}, {0x7f, 0x08, 0x08, 0x08, 0x7f},
+	{0x00, 0x41, 0x7f, 0x41, 0x00}, {0x20, 0x40, 0x41, 0x3f, 0x01},
+	{0x7f, 0x08, 0x14, 0x22, 0x41}, {0x7f, 0x40, 0x40, 0x40, 0x40},
+	{0x7f, 0x02, 0x0c, 0x02, 0x7f}, {0x7f, 0x04, 0x08, 0x10, 0x7f},
+	{0x3e, 0x41, 0x41, 0x41, 0x3e}, {0x7f, 0x09, 0x09, 0x09, 0x06},
+	{0x3e, 0x41, 0x51, 0x21, 0x5e}, {0x7f, 0x09, 0x19, 0x29, 0x46},
+	{0x46, 0x49, 0x49, 0x49, 0x31}, {0x01, 0x01, 0x7f, 0x01, 0x01},
+	{0x3f, 0x40, 0x40, 0x40, 0x3f}, {0x1f, 0x20, 0x40, 0x20, 0x1f},
+	{0x3f, 0x40, 0x38, 0x40, 0x3f}, {0x63, 0x14, 0x08, 0x14, 0x63},
+	{0x07, 0x08, 0x70, 0x08, 0x07}, {0x61, 0x51, 0x49, 0x45, 0x43},
+	{0x3e, 0x51, 0x49, 0x45, 0x3e}, {0x00, 0x42, 0x7f, 0x40, 0x00},
+	{0x42, 0x61, 0x51, 0x49, 0x46}, {0x21, 0x41, 0x45, 0x4b, 0x31},
+	{0x18, 0x14, 0x12, 0x7f, 0x10}, {0x27, 0x45, 0x45, 0x45, 0x39},
+	{0x3c, 0x4a, 0x49, 0x49, 0x30}, {0x01, 0x71, 0x09, 0x05, 0x03},
+	{0x36, 0x49, 0x49, 0x49, 0x36}, {0x06, 0x49, 0x49, 0x29, 0x1e},
+	{0, 0, 0, 0, 0},                {0, 0, 0x14, 0, 0},
+	{0, 0x60, 0x60, 0, 0},          {0x08, 0x08, 0x08, 0x08, 0x08}
+};
+
+static void on_signal(int sig)
+{
+	(void)sig;
+	g_running = 0;
+}
+
+static void msleep(unsigned ms)
+{
+	while (ms > 0) {
+		unsigned step = ms > 1000 ? 1000 : ms;
+		struct timespec ts = { .tv_sec = 0, .tv_nsec = (long)step * 1000000L };
+		nanosleep(&ts, NULL);
+		ms -= step;
+	}
+}
+
+static char *trim(char *s)
+{
+	while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')
+		s++;
+	char *end = s + strlen(s);
+	while (end > s && (end[-1] == ' ' || end[-1] == '\t' ||
+			   end[-1] == '\r' || end[-1] == '\n'))
+		*--end = '\0';
+	return s;
+}
 
 static int write_text(const char *path, const char *value)
 {
-    int fd=open(path,O_WRONLY);
-    if(fd<0) return -1;
-    ssize_t n=write(fd,value,strlen(value));
-    close(fd);
-    return n==(ssize_t)strlen(value)?0:-1;
+	size_t len = strlen(value);
+	size_t off = 0;
+	int fd = open(path, O_WRONLY);
+
+	if (fd < 0)
+		return -1;
+	while (off < len) {
+		ssize_t n = write(fd, value + off, len - off);
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			close(fd);
+			return -1;
+		}
+		off += (size_t)n;
+	}
+	close(fd);
+	return 0;
 }
-static int gpio_number(int offset)
+
+static int read_int_file(const char *path, int *out)
 {
-    DIR *d=opendir("/sys/class/gpio");
-    if(!d) return -1;
-    struct dirent *e; int result=-1;
-    while((e=readdir(d))) {
-        if(strncmp(e->d_name,"gpiochip",8)) continue;
-        char p[256], label[128]=""; int base=-1, ngpio=0;
-        snprintf(p,sizeof(p),"/sys/class/gpio/%s/base",e->d_name);
-        FILE *f=fopen(p,"r"); if(f){fscanf(f,"%d",&base);fclose(f);}
-        snprintf(p,sizeof(p),"/sys/class/gpio/%s/ngpio",e->d_name);
-        f=fopen(p,"r"); if(f){fscanf(f,"%d",&ngpio);fclose(f);}
-        snprintf(p,sizeof(p),"/sys/class/gpio/%s/label",e->d_name);
-        f=fopen(p,"r"); if(f){fgets(label,sizeof(label),f);fclose(f);}
-        if(base>=0 && ngpio>offset) {
-            if(result<0) result=base+offset;
-            if(strstr(label,"10000600") || strstr(label,"mt7628")) {
-                result=base+offset;
-                break;
-            }
-        }
-    }
-    closedir(d);
-    return result;
+	FILE *f = fopen(path, "r");
+	int value;
+
+	if (!f)
+		return -1;
+	if (fscanf(f, "%d", &value) != 1) {
+		fclose(f);
+		return -1;
+	}
+	fclose(f);
+	*out = value;
+	return 0;
 }
-static int gpio_setup(int offset, int *number, int initial)
+
+/*
+ * Resolve the sysfs base of the GPIO controller that owns a SoC pin offset.
+ * Prefers a chip whose label names the MT7628/MT7621 block, but falls back to
+ * the first controller wide enough to contain the offset.
+ */
+static int gpio_chip_base_for(int offset)
 {
-    *number=gpio_number(offset);
-    if(*number<0) { fprintf(stderr,"No gpiochip covers GPIO offset %d\n",offset); return -1; }
-    char p[128],v[32];
-    snprintf(p,sizeof(p),"/sys/class/gpio/gpio%d",*number);
-    if(access(p,F_OK)!=0) {
-        snprintf(v,sizeof(v),"%d",*number);
-        if(write_text("/sys/class/gpio/export",v)<0 && errno!=EBUSY) return -1;
-        usleep(20000);
-    }
-    snprintf(p,sizeof(p),"/sys/class/gpio/gpio%d/direction",*number);
-    if(write_text(p,"out")<0) return -1;
-    snprintf(p,sizeof(p),"/sys/class/gpio/gpio%d/value",*number);
-    snprintf(v,sizeof(v),"%d",initial);
-    return write_text(p,v);
+	DIR *dir = opendir("/sys/class/gpio");
+	struct dirent *entry;
+	int best = -1;
+
+	if (!dir)
+		return -1;
+
+	while ((entry = readdir(dir))) {
+		char path[256];
+		char label[128] = "";
+		int base = -1;
+		int ngpio = 0;
+		FILE *f;
+
+		if (strncmp(entry->d_name, "gpiochip", 8) != 0)
+			continue;
+
+		snprintf(path, sizeof(path), "/sys/class/gpio/%s/base", entry->d_name);
+		if (read_int_file(path, &base) < 0)
+			continue;
+
+		snprintf(path, sizeof(path), "/sys/class/gpio/%s/ngpio", entry->d_name);
+		if (read_int_file(path, &ngpio) < 0)
+			continue;
+
+		snprintf(path, sizeof(path), "/sys/class/gpio/%s/label", entry->d_name);
+		f = fopen(path, "r");
+		if (f) {
+			if (!fgets(label, sizeof(label), f))
+				label[0] = '\0';
+			fclose(f);
+		}
+
+		if (base < 0 || ngpio <= offset)
+			continue;
+
+		if (best < 0)
+			best = base;
+		if (strstr(label, "10000600") || strstr(label, "mt7628") ||
+		    strstr(label, "mt7621")) {
+			best = base;
+			break;
+		}
+	}
+
+	closedir(dir);
+	return best;
 }
+
+static int gpio_claim(int offset, int *number, int initial)
+{
+	char path[160];
+	char text[32];
+	int base = gpio_chip_base_for(offset);
+
+	if (base < 0) {
+		fprintf(stderr, "gpio: no gpiochip covers offset %d "
+			"(is CONFIG_GPIO_SYSFS enabled?)\n", offset);
+		return -1;
+	}
+	*number = base + offset;
+	if (*number < 0)
+		return -1;
+
+	snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d", *number);
+	if (access(path, F_OK) != 0) {
+		snprintf(text, sizeof(text), "%d", *number);
+		if (write_text("/sys/class/gpio/export", text) < 0) {
+			fprintf(stderr, "gpio: export %d failed: %s\n",
+				*number, strerror(errno));
+			return -1;
+		}
+		msleep(25);
+	}
+
+	snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/direction", *number);
+	if (write_text(path, "out") < 0) {
+		fprintf(stderr, "gpio: direction for %d failed: %s\n",
+			*number, strerror(errno));
+		return -1;
+	}
+
+	snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/value", *number);
+	snprintf(text, sizeof(text), "%d", initial);
+	return write_text(path, text);
+}
+
 static int gpio_set(int number, int value)
 {
-    char p[128],v[4];
-    snprintf(p,sizeof(p),"/sys/class/gpio/gpio%d/value",number);
-    snprintf(v,sizeof(v),"%d",value);
-    return write_text(p,v);
+	char path[160];
+	char text[4];
+
+	snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/value", number);
+	snprintf(text, sizeof(text), "%d", value ? 1 : 0);
+	return write_text(path, text);
 }
-static int spi_write(struct display *d, const uint8_t *data, size_t len)
+
+static int spi_write_all(int fd, const uint8_t *buf, size_t len)
 {
-    ssize_t w;
-    do { w=write(d->spi,data,len); } while(w<0 && errno==EINTR);
-    if(w<0) return -1;
-    if((size_t)w!=len) { errno=EIO; return -1; }
-    return 0;
+	size_t off = 0;
+
+	while (off < len) {
+		ssize_t n = write(fd, buf + off, len - off);
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			return -1;
+		}
+		if (n == 0) {
+			errno = EIO;
+			return -1;
+		}
+		off += (size_t)n;
+	}
+	return 0;
 }
-static int command(struct display *d, uint8_t cmd, const uint8_t *data, size_t len)
+
+static int lcd_cmd(struct display *d, uint8_t cmd, const uint8_t *data, size_t len)
 {
-    if(gpio_set(d->dc,0)<0 || spi_write(d,&cmd,1)<0) return -1;
-    if(len && (gpio_set(d->dc,1)<0 || spi_write(d,data,len)<0)) return -1;
-    return 0;
+	if (gpio_set(d->dc, 0) < 0)
+		return -1;
+	if (spi_write_all(d->spi, &cmd, 1) < 0)
+		return -1;
+	if (len == 0)
+		return 0;
+	if (gpio_set(d->dc, 1) < 0)
+		return -1;
+	return spi_write_all(d->spi, data, len);
 }
-static int panel_init(struct display *d)
+
+/* ST7789 MADCTL for each rotation, with the BGR bit set as the vendor panel. */
+static uint8_t madctl_for(int rotation)
 {
-    if(gpio_set(d->backlight,0)<0) return -1;
-    gpio_set(d->reset,0); usleep(30000);
-    gpio_set(d->reset,1); usleep(150000);
-    if(command(d,0x01,NULL,0)<0) return -1; usleep(150000); /* SWRESET */
-    if(command(d,0x11,NULL,0)<0) return -1; usleep(120000); /* SLPOUT */
-    const uint8_t colmod=0x55, madctl=0x08;
-    const uint8_t cols[]={0x00,0x00,0x00,0xef};
-    const uint8_t rows[]={0x00,0x00,0x01,0x3f};
-    const uint8_t porch[]={0x0c,0x0c,0x00,0x33,0x33};
-    if(command(d,0x3a,&colmod,1)<0 || command(d,0x36,&madctl,1)<0 ||
-       command(d,0x2a,cols,sizeof(cols))<0 || command(d,0x2b,rows,sizeof(rows))<0 ||
-       command(d,0xb2,porch,sizeof(porch))<0 || command(d,0x21,NULL,0)<0 ||
-       command(d,0x13,NULL,0)<0 || command(d,0x29,NULL,0)<0) return -1;
-    usleep(100000);
-    return gpio_set(d->backlight,1);
+	switch (rotation & 3) {
+	case 1:
+		return 0x68; /* MX | MV | BGR */
+	case 2:
+		return 0xC8; /* MX | MY | BGR */
+	case 3:
+		return 0xA8; /* MY | MV | BGR */
+	default:
+		return 0x08; /* BGR */
+	}
 }
-static void pixel(struct display *d,int x,int y,uint16_t c)
+
+static int panel_init(struct display *d, const struct config *cfg)
 {
-    if(x>=0&&x<W&&y>=0&&y<H) d->pixels[y*W+x]=c;
+	static const uint8_t porch[] = { 0x0c, 0x0c, 0x00, 0x33, 0x33 };
+	static const uint8_t gate[] = { 0x35 };
+	static const uint8_t vcoms[] = { 0x19 };
+	static const uint8_t lcm[] = { 0x2c };
+	static const uint8_t vdvvrhen[] = { 0x01 };
+	static const uint8_t vrhs[] = { 0x12 };
+	static const uint8_t vdvs[] = { 0x20 };
+	static const uint8_t frctrl[] = { 0x0f };
+	static const uint8_t pwctrl[] = { 0xa4, 0xa1 };
+	static const uint8_t gammap[] = { 0xd0, 0x04, 0x0d, 0x11, 0x13, 0x2b,
+					  0x3f, 0x54, 0x4c, 0x18, 0x0d, 0x0b,
+					  0x1f, 0x23 };
+	static const uint8_t gaman[] = { 0xd0, 0x04, 0x0c, 0x11, 0x13, 0x2c,
+					 0x3f, 0x44, 0x51, 0x2f, 0x1f, 0x1f,
+					 0x20, 0x23 };
+	const uint8_t colmod = 0x55;
+	const uint8_t madctl = madctl_for(cfg->rotation);
+
+	gpio_set(d->backlight, 0);
+	gpio_set(d->reset, 0);
+	msleep(30);
+	gpio_set(d->reset, 1);
+	msleep(150);
+
+	if (lcd_cmd(d, 0x01, NULL, 0) < 0)  /* SWRESET */
+		return -1;
+	msleep(150);
+	if (lcd_cmd(d, 0x11, NULL, 0) < 0)  /* SLPOUT */
+		return -1;
+	msleep(120);
+
+	if (lcd_cmd(d, 0x3a, &colmod, 1) < 0 ||        /* COLMOD 16bpp */
+	    lcd_cmd(d, 0x36, &madctl, 1) < 0 ||        /* MADCTL rotation */
+	    lcd_cmd(d, 0xb2, porch, sizeof(porch)) < 0 ||   /* PORCTRL */
+	    lcd_cmd(d, 0xb7, gate, sizeof(gate)) < 0 ||     /* GCTRL */
+	    lcd_cmd(d, 0xbb, vcoms, sizeof(vcoms)) < 0 ||   /* VCOMS */
+	    lcd_cmd(d, 0xc0, lcm, sizeof(lcm)) < 0 ||       /* LCMCTRL */
+	    lcd_cmd(d, 0xc2, vdvvrhen, sizeof(vdvvrhen)) < 0 ||
+	    lcd_cmd(d, 0xc3, vrhs, sizeof(vrhs)) < 0 ||     /* VRHS */
+	    lcd_cmd(d, 0xc4, vdvs, sizeof(vdvs)) < 0 ||     /* VDVS */
+	    lcd_cmd(d, 0xc6, frctrl, sizeof(frctrl)) < 0 || /* FRCTRL2 */
+	    lcd_cmd(d, 0xd0, pwctrl, sizeof(pwctrl)) < 0 || /* PWCTRL1 */
+	    lcd_cmd(d, 0xe0, gammap, sizeof(gammap)) < 0 || /* PVGAMCTRL */
+	    lcd_cmd(d, 0xe1, gaman, sizeof(gaman)) < 0)     /* NVGAMCTRL */
+		return -1;
+
+	if (lcd_cmd(d, 0x21, NULL, 0) < 0 ||  /* INVON */
+	    lcd_cmd(d, 0x13, NULL, 0) < 0 ||  /* NORON */
+	    lcd_cmd(d, 0x29, NULL, 0) < 0)    /* DISPON */
+		return -1;
+
+	msleep(100);
+	return gpio_set(d->backlight, 1);
 }
-static void rect(struct display *d,int x,int y,int w,int h,uint16_t c)
+
+static void pixel(struct display *d, int x, int y, uint16_t color)
 {
-    for(int yy=y;yy<y+h;yy++) for(int xx=x;xx<x+w;xx++) pixel(d,xx,yy,c);
+	if (x >= 0 && x < PANEL_W && y >= 0 && y < PANEL_H)
+		d->pixels[y * PANEL_W + x] = color;
 }
+
+static void rect(struct display *d, int x, int y, int w, int h, uint16_t color)
+{
+	for (int yy = y; yy < y + h; yy++)
+		for (int xx = x; xx < x + w; xx++)
+			pixel(d, xx, yy, color);
+}
+
+static void fill(struct display *d, uint16_t color)
+{
+	for (size_t i = 0; i < PANEL_W * PANEL_H; i++)
+		d->pixels[i] = color;
+}
+
 static int glyph(char c)
 {
-    if(c>='a'&&c<='z') c=(char)(c-'a'+'A');
-    if(c>='A'&&c<='Z') return c-'A';
-    if(c>='0'&&c<='9') return 26+c-'0';
-    if(c==' ') return 36; if(c==':') return 37; if(c=='.') return 38; if(c=='-') return 39;
-    return 36;
+	if (c >= 'a' && c <= 'z')
+		c = (char)(c - 'a' + 'A');
+	if (c >= 'A' && c <= 'Z')
+		return c - 'A';
+	if (c >= '0' && c <= '9')
+		return 26 + c - '0';
+	if (c == ':')
+		return 37;
+	if (c == '.')
+		return 38;
+	if (c == '-')
+		return 39;
+	return 36;
 }
-static void draw_text(struct display *d,int x,int y,const char *s,int scale,uint16_t color)
+
+static void draw_text(struct display *d, int x, int y, const char *s,
+		      int scale, uint16_t color)
 {
-    for(;*s;s++,x+=6*scale) {
-        int g=glyph(*s);
-        for(int col=0;col<5;col++) for(int row=0;row<7;row++)
-            if(font[g][col]&(1u<<row))
-                rect(d,x+col*scale,y+row*scale,scale,scale,color);
-    }
+	for (; *s; s++, x += 6 * scale) {
+		int g = glyph(*s);
+
+		for (int col = 0; col < 5; col++)
+			for (int row = 0; row < 7; row++)
+				if (font[g][col] & (1u << row))
+					rect(d, x + col * scale, y + row * scale,
+					     scale, scale, color);
+	}
 }
+
 static int flush(struct display *d)
 {
-    const uint8_t cols[]={0,0,0,(uint8_t)(W-1)};
-    const uint8_t rows[]={0,0,(uint8_t)((H-1)>>8),(uint8_t)(H-1)};
-    if(command(d,0x2a,cols,4)<0 || command(d,0x2b,rows,4)<0 ||
-       command(d,0x2c,NULL,0)<0 || gpio_set(d->dc,1)<0) return -1;
-    size_t total=(size_t)W*H;
-    uint8_t *frame=malloc(total*2);
-    if(!frame) return -1;
-    for(size_t i=0;i<total;i++) {
-        frame[2*i]=(uint8_t)(d->pixels[i]>>8);
-        frame[2*i+1]=(uint8_t)d->pixels[i];
-    }
-    struct spi_ioc_transfer transfers[38];
-    memset(transfers,0,sizeof(transfers));
-    size_t offset=0;
-    for(size_t i=0;i<38;i++) {
-        size_t n=total*2-offset;
-        if(n>4096) n=4096;
-        transfers[i].tx_buf=(uintptr_t)(frame+offset);
-        transfers[i].len=(uint32_t)n;
-        transfers[i].speed_hz=SPI_HZ;
-        transfers[i].bits_per_word=8;
-        offset+=n;
-    }
-    int rc=ioctl(d->spi,SPI_IOC_MESSAGE(38),transfers)<0?-1:0;
-    free(frame);
-    return rc;
+	const uint8_t cols[4] = { 0, 0, (uint8_t)((PANEL_W - 1) >> 8),
+				  (uint8_t)(PANEL_W - 1) };
+	const uint8_t rows[4] = { 0, 0, (uint8_t)((PANEL_H - 1) >> 8),
+				  (uint8_t)(PANEL_H - 1) };
+	const size_t total = (size_t)PANEL_W * PANEL_H;
+	struct spi_ioc_transfer tr[40];
+	uint8_t *frame;
+	size_t off = 0;
+	int index = 0;
+	int rc;
+
+	frame = malloc(total * 2);
+	if (!frame)
+		return -1;
+
+	for (size_t i = 0; i < total; i++) {
+		frame[2 * i] = (uint8_t)(d->pixels[i] >> 8);
+		frame[2 * i + 1] = (uint8_t)(d->pixels[i] & 0xff);
+	}
+
+	if (lcd_cmd(d, 0x2a, cols, sizeof(cols)) < 0 ||
+	    lcd_cmd(d, 0x2b, rows, sizeof(rows)) < 0 ||
+	    lcd_cmd(d, 0x2c, NULL, 0) < 0 ||      /* RAMWR */
+	    gpio_set(d->dc, 1) < 0) {
+		free(frame);
+		return -1;
+	}
+
+	memset(tr, 0, sizeof(tr));
+	while (off < total * 2 && index < (int)(sizeof(tr) / sizeof(tr[0]))) {
+		size_t n = total * 2 - off;
+
+		if (n > SPI_CHUNK)
+			n = SPI_CHUNK;
+		tr[index].tx_buf = (uintptr_t)(frame + off);
+		tr[index].len = (uint32_t)n;
+		tr[index].speed_hz = SPI_HZ;
+		tr[index].bits_per_word = 8;
+		off += n;
+		index++;
+	}
+
+	rc = ioctl(d->spi, SPI_IOC_MESSAGE(index), tr) < 0 ? -1 : 0;
+	free(frame);
+	return rc;
 }
-static void json_value(const char *json,const char *key,char *out,size_t n)
+
+static void json_string(const char *json, const char *key, char *out, size_t out_len)
 {
-    char needle[64]; snprintf(needle,sizeof(needle),"\"%s\":\"",key);
-    const char *p=strstr(json,needle);
-    if(!p){snprintf(out,n,"UNAVAILABLE");return;}
-    p+=strlen(needle); size_t i=0;
-    while(*p&&*p!='"'&&i+1<n) { if(*p=='\\'&&p[1])p++; out[i++]=*p++; }
-    out[i]=0;
-    if(!i) snprintf(out,n,"UNAVAILABLE");
+	char needle[64];
+	const char *p;
+	size_t i = 0;
+
+	snprintf(needle, sizeof(needle), "\"%s\":\"", key);
+	p = strstr(json, needle);
+	if (!p) {
+		snprintf(out, out_len, "UNAVAILABLE");
+		return;
+	}
+	p += strlen(needle);
+	while (*p && *p != '"' && i + 1 < out_len) {
+		if (*p == '\\' && p[1])
+			p++;
+		out[i++] = *p++;
+	}
+	out[i] = '\0';
+	if (i == 0)
+		snprintf(out, out_len, "UNAVAILABLE");
 }
-static void status(char *ip,size_t ni,char *fix,size_t nf,char *utc,size_t nu,
-                   char *ntp,size_t nn,char *ref,size_t nr)
+
+struct snapshot {
+	char ipv4[40];
+	char fix[16];
+	char utc[40];
+	char ntp_state[24];
+	char reference[40];
+};
+
+static void read_status(struct snapshot *s)
 {
-    char json[8192]="";
-    FILE *f=popen("/usr/sbin/yspeed-status 2>/dev/null","r");
-    if(f){size_t n=fread(json,1,sizeof(json)-1,f);json[n]=0;pclose(f);}
-    json_value(json,"ipv4",ip,ni); json_value(json,"fix",fix,nf);
-    json_value(json,"utc",utc,nu); json_value(json,"state",ntp,nn);
-    json_value(json,"reference",ref,nr);
+	char json[STATUS_JSON_MAX] = "";
+	FILE *f = popen(STATUS_BIN " 2>/dev/null", "r");
+
+	if (f) {
+		size_t n = fread(json, 1, sizeof(json) - 1, f);
+		json[n] = '\0';
+		pclose(f);
+	}
+
+	json_string(json, "ipv4", s->ipv4, sizeof(s->ipv4));
+	json_string(json, "fix", s->fix, sizeof(s->fix));
+	json_string(json, "utc", s->utc, sizeof(s->utc));
+	json_string(json, "state", s->ntp_state, sizeof(s->ntp_state));
+	json_string(json, "reference", s->reference, sizeof(s->reference));
 }
+
+static void draw_page(struct display *d, int page, const struct config *cfg)
+{
+	static const uint16_t bg = 0x08a3, panel = 0x19e7, white = 0xef7d;
+	static const uint16_t aqua = 0x16d5, muted = 0x8d96;
+	struct snapshot snap;
+	char line[64];
+	time_t now;
+	struct tm tmv;
+
+	(void)cfg;
+	read_status(&snap);
+	now = time(NULL);
+	localtime_r(&now, &tmv);
+
+	rect(d, 0, 0, PANEL_W, PANEL_H, bg);
+	rect(d, 0, 0, PANEL_W, 42, panel);
+	draw_text(d, 12, 12, "YSPEED GNSS NTP", 2, aqua);
+
+	switch (page) {
+	case 0:
+		draw_text(d, 12, 54, "LOCAL SYSTEM TIME", 1, muted);
+		strftime(line, sizeof(line), "%H:%M:%S", &tmv);
+		draw_text(d, 12, 72, line, 3, white);
+		strftime(line, sizeof(line), "%Y-%m-%d", &tmv);
+		draw_text(d, 12, 108, line, 2, white);
+		rect(d, 10, 140, PANEL_W - 20, 2, aqua);
+		draw_text(d, 12, 152, "ETHERNET", 1, muted);
+		draw_text(d, 12, 168, snap.ipv4, 1, white);
+		draw_text(d, 12, 194, "GNSS FIX", 1, muted);
+		draw_text(d, 12, 210, snap.fix, 1, white);
+		draw_text(d, 12, 240, "RECEIVER UTC", 1, muted);
+		draw_text(d, 12, 256, snap.utc, 1, white);
+		draw_text(d, 12, 286, "CHRONY", 1, aqua);
+		draw_text(d, 74, 286, snap.ntp_state, 1, white);
+		break;
+	case 1:
+		draw_text(d, 12, 58, "GNSS STATUS", 2, aqua);
+		draw_text(d, 12, 100, "FIX MODE", 1, muted);
+		draw_text(d, 12, 118, snap.fix, 1, white);
+		draw_text(d, 12, 158, "RECEIVER UTC", 1, muted);
+		draw_text(d, 12, 176, snap.utc, 1, white);
+		draw_text(d, 12, 230, "ANTENNA REQUIRED", 1, aqua);
+		draw_text(d, 12, 250, "FOR SATELLITE FIX", 1, aqua);
+		break;
+	default:
+		draw_text(d, 12, 58, "NETWORK AND TIME", 2, aqua);
+		draw_text(d, 12, 100, "ETHERNET ADDRESS", 1, muted);
+		draw_text(d, 12, 118, snap.ipv4, 1, white);
+		draw_text(d, 12, 158, "CHRONY STATE", 1, muted);
+		draw_text(d, 12, 176, snap.ntp_state, 1, white);
+		draw_text(d, 12, 216, "REFERENCE", 1, muted);
+		draw_text(d, 12, 234, snap.reference, 1, white);
+		draw_text(d, 12, 284, "LOCAL NTP UDP 123", 1, aqua);
+		break;
+	}
+
+	draw_text(d, 12, 306, "UP/DOWN: PAGES", 1, muted);
+
+	if (flush(d) < 0)
+		fprintf(stderr, "spi: frame transfer failed: %s\n", strerror(errno));
+}
+
+static void config_load(struct config *cfg)
+{
+	char line[160];
+	FILE *f;
+
+	cfg->rotation = 3;          /* verified working orientation on this unit */
+	cfg->sleep_seconds = 120;   /* vendor default */
+	cfg->english = 1;
+
+	f = fopen(CONFIG_PATH, "r");
+	if (!f)
+		return;
+
+	while (fgets(line, sizeof(line), f)) {
+		char *eq = strchr(line, '=');
+		char *key;
+		char *value;
+
+		if (!eq)
+			continue;
+		*eq = '\0';
+		key = trim(line);
+		value = trim(eq + 1);
+
+		if (strcmp(key, "rotation") == 0) {
+			int r = atoi(value);
+
+			if (r >= 0 && r <= 3)
+				cfg->rotation = r;
+		} else if (strcmp(key, "backlight_sleep_time") == 0) {
+			int s = atoi(value);
+
+			if (s >= 0)
+				cfg->sleep_seconds = s;
+		} else if (strcmp(key, "language") == 0) {
+			cfg->english = strcmp(value, "english") == 0;
+		}
+	}
+	fclose(f);
+}
+
 static int open_keys(void)
 {
-    char p[64];
-    for(int i=0;i<16;i++) {
-        snprintf(p,sizeof(p),"/dev/input/event%d",i);
-        int fd=open(p,O_RDONLY|O_NONBLOCK); if(fd<0)continue;
-        unsigned long bits[(KEY_MAX+sizeof(unsigned long)*8)/(sizeof(unsigned long)*8)]={0};
-        if(ioctl(fd,EVIOCGBIT(EV_KEY,sizeof(bits)),bits)>=0 &&
-           (bits[KEY_UP/(sizeof(unsigned long)*8)]&(1UL<<(KEY_UP%(sizeof(unsigned long)*8)))) &&
-           (bits[KEY_DOWN/(sizeof(unsigned long)*8)]&(1UL<<(KEY_DOWN%(sizeof(unsigned long)*8)))) &&
-           (bits[KEY_ENTER/(sizeof(unsigned long)*8)]&(1UL<<(KEY_ENTER%(sizeof(unsigned long)*8))))) return fd;
-        close(fd);
-    }
-    return -1;
+	char path[64];
+
+	for (int i = 0; i < 16; i++) {
+		unsigned long bits[16] = { 0 };
+		int fd;
+
+		snprintf(path, sizeof(path), "/dev/input/event%d", i);
+		fd = open(path, O_RDONLY | O_NONBLOCK);
+		if (fd < 0)
+			continue;
+
+		if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(bits)), bits) >= 0 &&
+		    (bits[KEY_UP / (8 * sizeof(unsigned long))] &
+		     (1UL << (KEY_UP % (8 * sizeof(unsigned long))))) &&
+		    (bits[KEY_DOWN / (8 * sizeof(unsigned long))] &
+		     (1UL << (KEY_DOWN % (8 * sizeof(unsigned long))))))
+			return fd;
+
+		close(fd);
+	}
+	return -1;
 }
-static void draw_page(struct display *d,int page)
+
+static int selftest(void)
 {
-    char ip[64],fix[64],utc[64],ntp[64],ref[64],line[64];
-    status(ip,sizeof(ip),fix,sizeof(fix),utc,sizeof(utc),ntp,sizeof(ntp),ref,sizeof(ref));
-    const uint16_t bg=0x08a3, panel=0x19e7, white=0xef7d, aqua=0x16d5, muted=0x8d96;
-    rect(d,0,0,W,H,bg); rect(d,0,0,W,42,panel);
-    draw_text(d,12,12,"YSPEED GNSS NTP",2,aqua);
-    if(page==0) {
-        time_t t=time(NULL); struct tm tmv; localtime_r(&t,&tmv);
-        draw_text(d,12,54,"LOCAL SYSTEM TIME",1,muted);
-        strftime(line,sizeof(line),"%H:%M:%S",&tmv); draw_text(d,12,72,line,3,white);
-        strftime(line,sizeof(line),"%Y-%m-%d",&tmv); draw_text(d,12,108,line,2,white);
-        rect(d,10,140,W-20,2,aqua);
-        draw_text(d,12,152,"ETHERNET",1,muted); draw_text(d,12,168,ip,1,white);
-        draw_text(d,12,194,"GNSS FIX",1,muted); draw_text(d,12,210,fix,1,white);
-        draw_text(d,12,240,"RECEIVER UTC",1,muted); draw_text(d,12,256,utc,1,white);
-        draw_text(d,12,286,"CHRONY",1,aqua); draw_text(d,70,286,ntp,1,white);
-    } else if(page==1) {
-        draw_text(d,12,58,"GNSS STATUS",2,aqua);
-        draw_text(d,12,100,"FIX MODE",1,muted); draw_text(d,12,118,fix,1,white);
-        draw_text(d,12,158,"RECEIVER UTC",1,muted); draw_text(d,12,176,utc,1,white);
-        draw_text(d,12,230,"ANTENNA REQUIRED",1,aqua);
-        draw_text(d,12,250,"FOR SATELLITE FIX",1,aqua);
-    } else {
-        draw_text(d,12,58,"NETWORK AND TIME",2,aqua);
-        draw_text(d,12,100,"ETHERNET ADDRESS",1,muted); draw_text(d,12,118,ip,1,white);
-        draw_text(d,12,158,"CHRONY STATE",1,muted); draw_text(d,12,176,ntp,1,white);
-        draw_text(d,12,216,"REFERENCE",1,muted); draw_text(d,12,234,ref,1,white);
-        draw_text(d,12,284,"LOCAL NTP UDP 123",1,aqua);
-    }
-    draw_text(d,12,306,"UP/DOWN: PAGES",1,muted);
-    if(flush(d)<0) fprintf(stderr,"SPI display frame transfer failed: %s\n",strerror(errno));
+	struct utsname u;
+	int ok = 1;
+
+	printf("== yspeed-display selftest ==\n");
+
+	if (uname(&u) == 0)
+		printf("kernel      : %s %s\n", u.sysname, u.release);
+	else
+		printf("kernel      : unknown\n");
+
+	printf("gpiochips   :\n");
+	{
+		DIR *dir = opendir("/sys/class/gpio");
+		struct dirent *entry;
+
+		if (!dir) {
+			printf("  /sys/class/gpio missing - CONFIG_GPIO_SYSFS=n?\n");
+			ok = 0;
+		} else {
+			while ((entry = readdir(dir))) {
+				char path[256], label[128] = "";
+				int base = -1, ngpio = -1;
+				FILE *f;
+
+				if (strncmp(entry->d_name, "gpiochip", 8) != 0)
+					continue;
+				snprintf(path, sizeof(path),
+					 "/sys/class/gpio/%s/base", entry->d_name);
+				read_int_file(path, &base);
+				snprintf(path, sizeof(path),
+					 "/sys/class/gpio/%s/ngpio", entry->d_name);
+				read_int_file(path, &ngpio);
+				snprintf(path, sizeof(path),
+					 "/sys/class/gpio/%s/label", entry->d_name);
+				f = fopen(path, "r");
+				if (f) {
+					if (!fgets(label, sizeof(label), f))
+						label[0] = '\0';
+					fclose(f);
+				}
+				printf("  %-14s base=%-4d ngpio=%-4d %s",
+				       entry->d_name, base, ngpio, label);
+				if (strchr(label, '\n') == NULL)
+					printf("\n");
+			}
+			closedir(dir);
+		}
+	}
+
+	struct { const char *name; int offset; } pins[] = {
+		{ "LCD_RESET", GPIO_RESET_OFFSET },
+		{ "LCD_DC", GPIO_DC_OFFSET },
+		{ "LCD_BACKLIGHT", GPIO_BACKLIGHT_OFFSET },
+	};
+	for (size_t i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
+		int base = gpio_chip_base_for(pins[i].offset);
+
+		if (base < 0) {
+			printf("%-12s: offset %d -> NOT RESOLVABLE\n",
+			       pins[i].name, pins[i].offset);
+			ok = 0;
+		} else {
+			printf("%-12s: offset %d -> sysfs gpio%d\n",
+			       pins[i].name, pins[i].offset,
+			       base + pins[i].offset);
+		}
+	}
+
+	if (access("/dev/spidev0.1", F_OK) == 0)
+		printf("spidev      : /dev/spidev0.1 present\n");
+	else {
+		printf("spidev      : /dev/spidev0.1 MISSING\n");
+		printf("              check CONFIG_SPI_SPIDEV and the st7789@1 node\n");
+		ok = 0;
+	}
+
+	if (access(CONFIG_PATH, F_OK) == 0)
+		printf("config      : %s present\n", CONFIG_PATH);
+	else
+		printf("config      : %s absent (defaults: rotation 3, sleep 120)\n",
+		       CONFIG_PATH);
+
+	if (!ok) {
+		printf("result      : FAILED before touching the panel\n");
+		return 1;
+	}
+	return 0;
 }
-int main(void)
+
+static int color_cycle(struct display *d, const struct config *cfg)
 {
-    struct display d={.spi=-1,.dc=-1,.reset=-1,.backlight=-1};
-    int dcno,rsno,blno;
-    if(gpio_setup(GPIO_DC_OFFSET,&dcno,0)<0 ||
-       gpio_setup(GPIO_RESET_OFFSET,&rsno,1)<0 ||
-       gpio_setup(GPIO_BACKLIGHT_OFFSET,&blno,0)<0) {
-        fprintf(stderr,"Unable to export/configure ST7789 GPIO lines\n"); return 1;
-    }
-    d.dc=dcno; d.reset=rsno; d.backlight=blno;
-    d.spi=open("/dev/spidev0.1",O_WRONLY);
-    if(d.spi<0){perror("open /dev/spidev0.1");return 1;}
-    uint8_t mode=SPI_MODE_0,bits=8; uint32_t speed=SPI_HZ;
-    if(ioctl(d.spi,SPI_IOC_WR_MODE,&mode)<0 ||
-       ioctl(d.spi,SPI_IOC_WR_BITS_PER_WORD,&bits)<0 ||
-       ioctl(d.spi,SPI_IOC_WR_MAX_SPEED_HZ,&speed)<0) {
-        perror("configure SPI"); return 1;
-    }
-    d.pixels=calloc(W*H,sizeof(uint16_t));
-    if(!d.pixels){perror("calloc");return 1;}
-    if(panel_init(&d)<0){fprintf(stderr,"ST7789 initialization failed\n");return 1;}
-    int keys=open_keys(),page=0;
-    draw_page(&d,page);
-    for(;;) {
-        if(keys<0) keys=open_keys();
-        if(keys>=0) {
-            struct pollfd pfd={.fd=keys,.events=POLLIN};
-            if(poll(&pfd,1,1800)>0 && (pfd.revents&POLLIN)) {
-                struct input_event ev;
-                while(read(keys,&ev,sizeof(ev))==(ssize_t)sizeof(ev))
-                    if(ev.type==EV_KEY&&ev.value==0) {
-                        if(ev.code==KEY_UP) page=(page+2)%3;
-                        if(ev.code==KEY_DOWN||ev.code==KEY_ENTER) page=(page+1)%3;
-                    }
-            }
-        } else sleep(2);
-        draw_page(&d,page);
-    }
-    return 0;
+	static const struct { const char *name; uint16_t color; } steps[] = {
+		{ "RED", 0xf800 }, { "GREEN", 0x07e0 }, { "BLUE", 0x001f },
+		{ "WHITE", 0xffff }, { "BLACK", 0x0000 },
+	};
+
+	if (panel_init(d, cfg) < 0) {
+		fprintf(stderr, "panel init failed\n");
+		return 1;
+	}
+
+	for (size_t i = 0; i < sizeof(steps) / sizeof(steps[0]); i++) {
+		printf("fill %s\n", steps[i].name);
+		fflush(stdout);
+		fill(d, steps[i].color);
+		if (flush(d) < 0) {
+			fprintf(stderr, "flush failed: %s\n", strerror(errno));
+			return 1;
+		}
+		msleep(700);
+	}
+
+	printf("selftest complete\n");
+	return 0;
+}
+
+static int display_open(struct display *d)
+{
+	uint8_t mode = SPI_MODE_0;
+	uint8_t bits = 8;
+	uint32_t speed = SPI_HZ;
+
+	d->spi = open("/dev/spidev0.1", O_WRONLY);
+	if (d->spi < 0) {
+		fprintf(stderr, "open /dev/spidev0.1: %s\n", strerror(errno));
+		return -1;
+	}
+
+	if (ioctl(d->spi, SPI_IOC_WR_MODE, &mode) < 0 ||
+	    ioctl(d->spi, SPI_IOC_WR_BITS_PER_WORD, &bits) < 0 ||
+	    ioctl(d->spi, SPI_IOC_WR_MAX_SPEED_HZ, &speed) < 0) {
+		fprintf(stderr, "configure SPI: %s\n", strerror(errno));
+		close(d->spi);
+		d->spi = -1;
+		return -1;
+	}
+	return 0;
+}
+
+static int gpio_open(struct display *d)
+{
+	if (gpio_claim(GPIO_DC_OFFSET, &d->dc, 0) < 0 ||
+	    gpio_claim(GPIO_RESET_OFFSET, &d->reset, 1) < 0 ||
+	    gpio_claim(GPIO_BACKLIGHT_OFFSET, &d->backlight, 0) < 0) {
+		fprintf(stderr, "unable to claim ST7789 GPIO lines\n");
+		return -1;
+	}
+	return 0;
+}
+
+int main(int argc, char **argv)
+{
+	/* static: the struct carries a 150 KiB framebuffer, too large for the stack */
+	static struct display d = { .spi = -1, .dc = -1, .reset = -1, .backlight = -1 };
+	struct config cfg;
+	const char *mode = argc > 1 ? argv[1] : NULL;
+	struct sigaction sa;
+	int keys;
+	int page = 0;
+	time_t last_activity;
+	int backlight_on = 1;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_signal;
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGINT, &sa, NULL);
+
+	config_load(&cfg);
+
+	if (mode && (strcmp(mode, "--selftest") == 0 ||
+		     strcmp(mode, "--test") == 0)) {
+		int rc = selftest();
+
+		if (rc != 0)
+			return rc;
+		if (!mode || strcmp(mode, "--test") != 0)
+			return 0;
+	}
+
+	if (gpio_open(&d) < 0)
+		return 1;
+	if (display_open(&d) < 0)
+		return 1;
+
+	if (mode && strcmp(mode, "--test") == 0)
+		return color_cycle(&d, &cfg);
+
+	if (panel_init(&d, &cfg) < 0) {
+		fprintf(stderr, "ST7789 initialization failed\n");
+		return 1;
+	}
+
+	keys = open_keys();
+	last_activity = time(NULL);
+	draw_page(&d, page, &cfg);
+
+	while (g_running) {
+		struct pollfd pfd;
+		int timeout_ms = 1000;
+		int ready;
+
+		if (keys < 0) {
+			keys = open_keys();
+			if (keys < 0) {
+				/* No key device: keep the dashboard updating anyway. */
+				if (backlight_on)
+					draw_page(&d, page, &cfg);
+				msleep(2000);
+				continue;
+			}
+		}
+
+		pfd.fd = keys;
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+		ready = poll(&pfd, 1, timeout_ms);
+
+		if (ready > 0 && (pfd.revents & POLLIN)) {
+			struct input_event ev;
+
+			while (read(keys, &ev, sizeof(ev)) == (ssize_t)sizeof(ev)) {
+				if (ev.type != EV_KEY || ev.value != 0)
+					continue;
+				last_activity = time(NULL);
+				if (!backlight_on) {
+					gpio_set(d.backlight, 1);
+					backlight_on = 1;
+				}
+				if (ev.code == KEY_UP)
+					page = (page + 2) % 3;
+				else if (ev.code == KEY_DOWN || ev.code == KEY_ENTER)
+					page = (page + 1) % 3;
+			}
+		}
+
+		if (cfg.sleep_seconds > 0 && backlight_on &&
+		    (time(NULL) - last_activity) >= cfg.sleep_seconds) {
+			gpio_set(d.backlight, 0);
+			backlight_on = 0;
+		}
+
+		if (backlight_on)
+			draw_page(&d, page, &cfg);
+	}
+
+	gpio_set(d.backlight, 0);
+	gpio_set(d.reset, 0);
+	if (d.spi >= 0)
+		close(d.spi);
+	return 0;
 }

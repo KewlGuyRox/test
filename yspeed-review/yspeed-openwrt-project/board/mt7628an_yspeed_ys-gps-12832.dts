@@ -1,67 +1,102 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* YSPEED YS-GPS-12832: MT7628AN, wired-only, RAM-boot profile. */
+/*
+ * YSPEED YS-GPS-12832: MT7628AN, wired-only, RAM-boot profile.
+ *
+ * Verified against the vendor device tree captured from the appliance
+ * (/hardware/device-tree.dtb, 8583 bytes) and the live /proc snapshots.
+ *
+ * GPIO ownership:
+ *   GPIO14 LCD reset, GPIO16 LCD D/C, GPIO19 backlight  -> userspace, via
+ *          sysfs, claimed by /usr/sbin/yspeed-display. No kernel driver.
+ *   GPIO18/23/26 front-panel keys                      -> kernel, gpio-keys.
+ *          The renderer reads them through evdev and must never export them.
+ *   GPIO11 PPS, GPIO38 reset button, GPIO44 status LED  -> kernel.
+ *
+ * The vendor kernel numbered sysfs GPIOs with base 480 (pin 16 == 496).
+ * Mainline 6.12 uses base 0 (pin 16 == 16). Userspace resolves the base at
+ * runtime; nothing here may hardcode either scheme.
+ */
 /dts-v1/;
+
 #include "mt7628an.dtsi"
+
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
 
 / {
-        model = "YSPEED YS-GPS-12832";
-        compatible = "yspeed,ys-gps-12832", "mediatek,mt7628an-soc";
+	model = "YSPEED YS-GPS-12832";
+	compatible = "yspeed,ys-gps-12832", "mediatek,mt7628an-soc";
 
-        aliases {
-                serial0 = &uartlite;
-                serial1 = &uart1;
-                serial2 = &uart2;
-        };
+	aliases {
+		serial0 = &uartlite;
+		serial1 = &uart1;
+		serial2 = &uart2;
+		led-boot = &led_status;
+		led-failsafe = &led_status;
+		led-running = &led_status;
+		led-upgrade = &led_status;
+	};
 
-        chosen { bootargs = "console=ttyS0,57600 spidev.bufsiz=262144"; };
+	chosen {
+		/* U-Boot is configured for 57600 baud, not the usual 115200. */
+		bootargs = "console=ttyS0,57600 spidev.bufsiz=262144";
+	};
 
-        pps-gps {
-                compatible = "pps-gpio";
-                gpios = <&gpio 11 GPIO_ACTIVE_HIGH>;
-                label = "pps-gps";
-                status = "okay";
-        };
+	pps-gps {
+		compatible = "pps-gpio";
+		gpios = <&gpio 11 GPIO_ACTIVE_HIGH>;
+		label = "pps-gps";
+		status = "okay";
+	};
 
-        keys {
-                compatible = "gpio-keys";
-                #address-cells = <1>;
-                #size-cells = <0>;
-                poll-interval = <20>;
+	keys {
+		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		poll-interval = <20>;
 
-                reset {
-                        label = "reset";
-                        linux,code = <KEY_RESTART>;
-                        gpios = <&gpio 38 GPIO_ACTIVE_LOW>;
-                        debounce-interval = <60>;
-                };
-                lcd-up {
-                        label = "LCD Up";
-                        linux,code = <KEY_UP>;
-                        gpios = <&gpio 18 GPIO_ACTIVE_LOW>;
-                        debounce-interval = <30>;
-                };
-                lcd-enter {
-                        label = "LCD Enter";
-                        linux,code = <KEY_ENTER>;
-                        gpios = <&gpio 23 GPIO_ACTIVE_LOW>;
-                        debounce-interval = <30>;
-                };
-                lcd-down {
-                        label = "LCD Down";
-                        linux,code = <KEY_DOWN>;
-                        gpios = <&gpio 26 GPIO_ACTIVE_LOW>;
-                        debounce-interval = <30>;
-                };
-        };
+		reset {
+			label = "reset";
+			linux,code = <KEY_RESTART>;
+			gpios = <&gpio 38 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+		lcd-up {
+			label = "LCD Up";
+			linux,code = <KEY_UP>;
+			gpios = <&gpio 18 GPIO_ACTIVE_LOW>;
+			debounce-interval = <30>;
+		};
+		lcd-enter {
+			label = "LCD Enter";
+			linux,code = <KEY_ENTER>;
+			gpios = <&gpio 23 GPIO_ACTIVE_LOW>;
+			debounce-interval = <30>;
+		};
+		lcd-down {
+			label = "LCD Down";
+			linux,code = <KEY_DOWN>;
+			gpios = <&gpio 26 GPIO_ACTIVE_LOW>;
+			debounce-interval = <30>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		led_status: status {
+			label = "green:status";
+			gpios = <&gpio 44 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "heartbeat";
+		};
+	};
 };
 
 &state_default {
-        gpio {
-                groups = "wdt", "wled_an";
-                function = "gpio";
-        };
+	gpio {
+		groups = "wdt", "wled_an";
+		function = "gpio";
+	};
 };
 
 &uartlite { status = "okay"; };
@@ -69,80 +104,100 @@
 &uart2 { status = "okay"; };
 
 &i2c {
-        status = "okay";
-        rtc@68 {
-                compatible = "dallas,ds1307";
-                reg = <0x68>;
-                status = "okay";
-        };
+	status = "okay";
+
+	rtc@68 {
+		compatible = "dallas,ds1307";
+		reg = <0x68>;
+		status = "okay";
+	};
 };
 
 &spi0 {
-        status = "okay";
-        pinctrl-names = "default";
-        pinctrl-0 = <&spi_pins>, <&spi_cs1_pins>;
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi_pins>, <&spi_cs1_pins>;
 
-        flash@0 {
-                compatible = "jedec,spi-nor";
-                reg = <0>;
-                spi-max-frequency = <40000000>;
-                partitions {
-                        compatible = "fixed-partitions";
-                        #address-cells = <1>;
-                        #size-cells = <1>;
-                        partition@0 {
-                                label = "u-boot";
-                                reg = <0x00000000 0x00030000>;
-                                read-only;
-                        };
-                        partition@30000 {
-                                label = "u-boot-env";
-                                reg = <0x00030000 0x00010000>;
-                                read-only;
-                        };
-                        partition@40000 {
-                                label = "factory";
-                                reg = <0x00040000 0x00010000>;
-                                read-only;
-                                nvmem-layout {
-                                        compatible = "fixed-layout";
-                                        #address-cells = <1>;
-                                        #size-cells = <1>;
-                                        macaddr_factory: mac-address@2e {
-                                                reg = <0x2e 0x6>;
-                                        };
-                                };
-                        };
-                        partition@50000 {
-                                compatible = "denx,uimage";
-                                label = "firmware";
-                                reg = <0x00050000 0x01fb0000>;
-                        };
-                };
-        };
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <40000000>;
 
-        /*
-         * The vendor firmware drives the colour ST7789 panel from userspace
-         * through /dev/spidev0.1. D/C, reset and backlight are GPIO offsets
-         * 16, 14 and 19; they are intentionally not claimed by kernel drivers.
-         * CS1 is hardware SPI chip-select via spi_cs1_pins.
-         */
-        st7789@1 {
-                compatible = "yspeed,st7789-spidev";
-                reg = <1>;
-                spi-max-frequency = <40000000>;
-        };
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "u-boot";
+				reg = <0x00000000 0x00030000>;
+				read-only;
+			};
+
+			partition@30000 {
+				label = "u-boot-env";
+				reg = <0x00030000 0x00010000>;
+				read-only;
+			};
+
+			partition@40000 {
+				label = "factory";
+				reg = <0x00040000 0x00010000>;
+				read-only;
+
+				/*
+				 * The factory block holds three sequential MACs:
+				 *   0x04 -> ...:09,  0x28 -> ...:0a,  0x2e -> ...:0b
+				 * The vendor DTB pointed at 0x28, but the vendor
+				 * UCI overrode eth0.2 with ...:0b. Using 0x2e
+				 * therefore reproduces the deployed WAN MAC.
+				 */
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					macaddr_factory: mac-address@2e {
+						reg = <0x2e 0x6>;
+					};
+				};
+			};
+
+			partition@50000 {
+				compatible = "denx,uimage";
+				label = "firmware";
+				reg = <0x00050000 0x01fb0000>;
+			};
+		};
+	};
+
+	/*
+	 * Vendor-confirmed userspace display: hardware SPI0 CS1 at 40 MHz.
+	 * The vendor DTB used compatible "linux,spidev"; mainline spidev does not
+	 * match that, so the build patches spidev.c to accept this string instead.
+	 */
+	st7789@1 {
+		compatible = "yspeed,st7789-spidev";
+		reg = <1>;
+		spi-max-frequency = <40000000>;
+	};
 };
 
 &gdma { status = "okay"; };
+
+&ehci { status = "okay"; };
+&ohci { status = "okay"; };
+
 &ethernet {
-        nvmem-cells = <&macaddr_factory>;
-        nvmem-cell-names = "mac-address";
-        status = "okay";
+	nvmem-cells = <&macaddr_factory>;
+	nvmem-cell-names = "mac-address";
+	status = "okay";
 };
+
 &esw {
-        compatible = "mediatek,mt7628-esw", "ralink,rt3050-esw";
-        status = "okay";
+	compatible = "mediatek,mt7628-esw", "ralink,rt3050-esw";
+	status = "okay";
 };
+
 &pcie { status = "disabled"; };
 &wmac { status = "disabled"; };

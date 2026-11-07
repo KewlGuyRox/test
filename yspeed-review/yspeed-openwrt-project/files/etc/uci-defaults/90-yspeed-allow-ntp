@@ -1,0 +1,28 @@
+#!/bin/sh
+# First-boot firewall rule: allow NTP (UDP/123) inbound on the WAN zone.
+#
+# The uplink port is the WAN: it joins the operator's existing LAN, and the
+# clients that query this appliance's Chrony live out there. OpenWrt's stock
+# defaults already permit the LAN zone, so only the WAN zone needs a rule.
+#
+# This script replaces the missing files/etc/uci-defaults/90-yspeed-allow-ntp
+# (only its NTFS Zone.Identifier sidecar had been committed upstream).
+
+[ -f /etc/config/firewall ] || exit 0
+
+# Idempotent: uci-defaults runs once, but a manual re-run must not duplicate.
+if uci -q show firewall | grep -q 'yspeed_allow_ntp'; then
+	exit 0
+fi
+
+uci -q batch <<EOF
+set firewall.yspeed_allow_ntp=rule
+set firewall.yspeed_allow_ntp.name='Allow-NTP-WAN'
+set firewall.yspeed_allow_ntp.src='wan'
+set firewall.yspeed_allow_ntp.proto='udp'
+set firewall.yspeed_allow_ntp.dest_port='123'
+set firewall.yspeed_allow_ntp.target='ACCEPT'
+commit firewall
+EOF
+
+exit 0
