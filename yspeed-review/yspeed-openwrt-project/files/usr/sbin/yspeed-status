@@ -30,13 +30,16 @@ lon="$(get_json "$tpv" lon)"
 alt="$(get_json "$tpv" alt)"
 speed="$(get_json "$tpv" speed)"
 track="$(get_json "$tpv" track)"
+hdop="$(get_json "$sky" hdop)"
+vdop="$(get_json "$sky" vdop)"
+pdop="$(get_json "$sky" pdop)"
 case "$mode" in
     3) fix="3D" ;;
     2) fix="2D" ;;
     *) fix="NO_FIX" ;;
 esac
-utc_valid=false
-[ -n "$utc" ] && [ "$utc" != "n/a" ] && utc_valid=true
+utc_reported=false
+[ -n "$utc" ] && [ "$utc" != "n/a" ] && utc_reported=true
 sat_count="$(printf '%s\n' "$sky" | jsonfilter -e '@.satellites[*].PRN' 2>/dev/null | wc -l | tr -d ' ')"
 chrony="$(chronyc tracking 2>/dev/null || true)"
 sources="$(chronyc sources -v 2>/dev/null || true)"
@@ -62,12 +65,15 @@ printf '{'
 printf '"timestamp":'; json_string "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
 printf ',"gnss":{"fix":"%s","mode":' "$fix"; json_number "$mode"
 printf ',"utc":'; json_string "$utc"
-printf ',"utc_valid":%s' "$utc_valid"
+printf ',"utc_reported":%s,"utc_precision_eligible":false' "$utc_reported"
 printf ',"latitude":'; json_number "$lat"
 printf ',"longitude":'; json_number "$lon"
 printf ',"altitude_m":'; json_number "$alt"
 printf ',"speed_mps":'; json_number "$speed"
 printf ',"course_deg":'; json_number "$track"
+printf ',"hdop":'; json_number "$hdop"
+printf ',"vdop":'; json_number "$vdop"
+printf ',"pdop":'; json_number "$pdop"
 printf ',"satellites_reported":'; json_number "$sat_count"
 printf '}'
 printf ',"ntp":{"state":"%s","reference":' "$ntp_state"; json_string "$refid"
