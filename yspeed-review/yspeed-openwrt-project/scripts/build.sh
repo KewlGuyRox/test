@@ -49,6 +49,7 @@ sh "$PROJECT_DIR/scripts/disable-wireless-defaults.sh" "$SRC"
 # Build the framebuffer core and ST7789V modules without the generic
 # kmod-fb package's @DISPLAY_SUPPORT dependency (not enabled by mt76x8).
 KERNEL_CONFIG="$SRC/target/linux/ramips/mt76x8/config-6.12"
+# FBTFT is a staging driver; fb mmap/write support needs FB_SYS_FOPS.
 for entry in \
   'CONFIG_STAGING=y' \
   'CONFIG_GPIOLIB=y' \
