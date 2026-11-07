@@ -115,7 +115,13 @@
 &spi0 {
         status = "okay";
         pinctrl-names = "default";
-        pinctrl-0 = <&spi_pins>, <&spi_cs1_pins>;
+        /*
+         * The vendor ST7789 application assigns GPIO6 as SPI_CS. Use the
+         * MT7628 GPIO line for CS1 instead of muxing the pad to native CS1.
+         * The SPI controller supports GPIO chip-select descriptors.
+         */
+        pinctrl-0 = <&spi_pins>;
+        cs-gpios = <0>, <&gpio 6 GPIO_ACTIVE_LOW>;
 
         flash@0 {
                 compatible = "jedec,spi-nor";
@@ -164,10 +170,10 @@
         };
 
         /*
-         * Ribbon-connected front-panel TFT. The vendor GPIO map records
-         * GPIO6 as the CS1 pad, GPIO16 D/C, GPIO14 reset and GPIO19 backlight.
-         * CS1 is provided by the MT7628 SPI pinmux group; do not request GPIO6
-         * separately while the hardware SPI controller owns chip select.
+         * Ribbon-connected front-panel TFT. Vendor application mapping:
+         * GPIO6 CS, GPIO16 D/C, GPIO14 reset, GPIO19 backlight.
+         * CS1 is routed through cs-gpios above so the SPI core toggles the
+         * same GPIO line used by the vendor userspace driver.
          */
         display@1 {
                 compatible = "sitronix,st7789v";
