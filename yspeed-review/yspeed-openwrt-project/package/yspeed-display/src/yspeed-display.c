@@ -237,8 +237,8 @@ static void draw_status(struct screen *s, int page, const char *ip,
         text(s,12,56,"GNSS STATUS",2,accent);
         text(s,12,94,"FIX MODE",1,muted); text(s,12,112,fix,2,white);
         text(s,12,154,"RECEIVER UTC",1,muted); text(s,12,172,utc_short,1,white);
-        text(s,12,214,"ANTENNA NOT REQUIRED",1,muted);
-        text(s,12,232,"FOR MENU OR DISPLAY",1,muted);
+        text(s,12,214,"SATELLITE FIX REQUIRES",1,muted);
+        text(s,12,232,"A CONNECTED ANTENNA",1,muted);
         text(s,12,286,"UP/DOWN: PAGES",1,accent);
         text(s,12,302,"ENTER: SELECT",1,accent);
     } else {
@@ -262,12 +262,12 @@ static void draw_setup(struct screen *s, int selected, int backlight, int rotati
     text(s,12,62,"LANGUAGE: ENGLISH",1,white);
     text(s,12,86,"LANGUAGE IS FIXED",1,muted);
     snprintf(line,sizeof(line),"BACKLIGHT: %s",backlight ? "ON" : "OFF");
-    text(s,12,132,selected==0 ? ">" : " ",1,accent);
+    text(s,12,132,selected==0 ? "-" : " ",1,accent);
     text(s,28,132,line,1,selected==0 ? white : muted);
     snprintf(line,sizeof(line),"ROTATION: %d",rotation);
-    text(s,12,166,selected==1 ? ">" : " ",1,accent);
+    text(s,12,166,selected==1 ? "-" : " ",1,accent);
     text(s,28,166,line,1,selected==1 ? white : muted);
-    text(s,12,200,selected==2 ? ">" : " ",1,accent);
+    text(s,12,200,selected==2 ? "-" : " ",1,accent);
     text(s,28,200,"EXIT SETUP",1,selected==2 ? white : muted);
     text(s,12,274,"TOP/BOTTOM: MOVE",1,accent);
     text(s,12,292,"MIDDLE: SELECT",1,accent);
