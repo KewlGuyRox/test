@@ -97,6 +97,57 @@ The script:
    validates the uImage CRCs/architecture/compression/load/entry addresses,
    and refuses to publish a sysupgrade/factory image.
 
+## Rack-side NTP service and telemetry
+
+- Ethernet DHCP accepts the address, default gateway and DNS offered by the
+  deployment DHCP server. The isolated bench network may intentionally offer
+  only an address; local NTP service does not require a gateway or DNS.
+- For static addressing, use LuCI **Network → Interfaces → WAN (eth0.2)** and
+  set the operator's address, mask, gateway and DNS. Do not create a second
+  Layer-3 interface or hard-code a subnet into the image.
+- Chrony is the only NTP daemon. OpenWrt sysntpd is disabled at first boot.
+  Chrony serves UDP/123 on eth0.2 to clients on any IPv4 subnet reaching that
+  interface. The firewall has an explicit UDP/123 allow rule.
+- NIST and Cloudflare are configured as independent network time pools. They
+  can be selected when DNS and routing are available. GPSD SHM and PPS remain
+  `noselect`; the current build does not claim precision GNSS discipline
+  until UTC validity and PPS-to-second association are measured and verified.
+- The live status page is `http://<device-address>/yspeed/`. It reads the
+  device's read-only telemetry endpoint at `/cgi-bin/yspeed-status`. The
+  endpoint reports GPSD fix mode and receiver UTC, Chrony tracking/source
+  status, PPS sysfs counters, RTC readback, Ethernet address, gateway and DNS.
+  Missing data is shown as unavailable; it is not synthesized.
+- The LCD application now consumes the same telemetry snapshot for fix, UTC,
+  Chrony source/state and Ethernet address. The physical ST7789 panel remains
+  a hardware validation item because the current framebuffer driver has not
+  yet produced visible pixels on the board.
+
+## Rack-side patch updates (no flash)
+
+Every successful build also publishes `yspeed-rack-update.tar.gz` and its
+SHA-256 file. This bundle contains the rootfs overlay (configuration, status
+API and web UI). It is intended for quick software/configuration patches on a
+running rack unit; it does not contain a kernel or firmware image.
+
+1. Copy the bundle to the appliance:
+   `scp yspeed-rack-update.tar.gz root@<device-address>:/tmp/`
+2. Read the expected SHA-256 from the accompanying
+   `yspeed-rack-update.tar.gz.sha256` artifact.
+3. Apply it interactively:
+   `/usr/sbin/yspeed-apply-update /tmp/yspeed-rack-update.tar.gz <sha256>`
+4. The updater validates the checksum and archive paths, lists the files,
+   and requires typing `APPLY`. It overlays files and restarts affected
+   services. It does **not** write flash. On the current initramfs image,
+   these changes are temporary and disappear on reboot.
+
+This overlay update path is for rapid userland/configuration iteration only.
+Kernel, device-tree, driver and full-system updates require a complete image
+update. A future persistent release should use a separately reviewed
+sysupgrade image through LuCI **System → Backup / Flash Firmware** or the
+standard `sysupgrade` path, after a verified recovery plan. No sysupgrade
+image is currently produced, and no flash writes are authorized by this
+project's RAM-only build.
+
 ## Safety gates before RAM boot
 
 Even after the script succeeds, do not boot the image until all of these are
