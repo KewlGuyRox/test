@@ -51,6 +51,17 @@ struct screen {
     struct fb_var_screeninfo var;
 };
 
+struct telemetry {
+    char fix[32], utc[64], ntp[32], ref[48], leap[32];
+    char last_offset[48], rms_offset[48], ip[32], gateway[32], dns[64];
+    char pps_assert[48], pps_clear[48], rtc[64];
+    double latitude, longitude, altitude, speed, course, hdop, vdop, pdop, uptime;
+    int satellites, stratum;
+    int have_lat, have_lon, have_alt, have_speed, have_course;
+    int have_hdop, have_vdop, have_pdop, have_satellites, have_stratum, have_uptime;
+    int pps_present;
+};
+
 static uint32_t rgb(uint8_t r, uint8_t g, uint8_t b, struct fb_var_screeninfo *v) {
     uint32_t p = 0;
     if (v->bits_per_pixel == 16)
@@ -109,25 +120,70 @@ static int json_string_value(const char *json, const char *key, char *out, size_
     out[i] = '\0';
     return i > 0;
 }
-static void get_shared_status(char *fix, size_t fixn, char *utc, size_t utcn,
-                              char *ntp, size_t ntpn, char *ref, size_t refn,
-                              char *ip, size_t ipn) {
-    snprintf(fix, fixn, "NO TELEMETRY");
-    snprintf(utc, utcn, "UNAVAILABLE");
-    snprintf(ntp, ntpn, "UNAVAILABLE");
-    snprintf(ref, refn, "NONE");
-    snprintf(ip, ipn, "NO ADDRESS");
+static int json_bool_value(const char *json, const char *key) {
+    char needle[48];
+    snprintf(needle, sizeof(needle), "\"%s\":", key);
+    const char *p = strstr(json, needle);
+    if (!p) return 0;
+    p += strlen(needle);
+    while (*p == ' ' || *p == '\t') p++;
+    return strncmp(p, "true", 4) == 0;
+}
+
+static void get_shared_status(struct telemetry *t) {
+    snprintf(t->fix, sizeof(t->fix), "NO TELEMETRY");
+    snprintf(t->utc, sizeof(t->utc), "UNAVAILABLE");
+    snprintf(t->ntp, sizeof(t->ntp), "UNAVAILABLE");
+    snprintf(t->ref, sizeof(t->ref), "NONE");
+    snprintf(t->leap, sizeof(t->leap), "UNKNOWN");
+    snprintf(t->ip, sizeof(t->ip), "UNAVAILABLE");
+    snprintf(t->gateway, sizeof(t->gateway), "UNAVAILABLE");
+    snprintf(t->dns, sizeof(t->dns), "UNAVAILABLE");
+    snprintf(t->rtc, sizeof(t->rtc), "UNAVAILABLE");
+    snprintf(t->pps_assert, sizeof(t->pps_assert), "UNAVAILABLE");
+    snprintf(t->pps_clear, sizeof(t->pps_clear), "UNAVAILABLE");
+
     FILE *f = popen("/usr/sbin/yspeed-status 2>/dev/null", "r");
     if (!f) return;
     char json[8192];
     size_t used = fread(json, 1, sizeof(json) - 1, f);
     json[used] = '\0';
     pclose(f);
-    json_string_value(json, "fix", fix, fixn);
-    json_string_value(json, "utc", utc, utcn);
-    json_string_value(json, "state", ntp, ntpn);
-    json_string_value(json, "reference", ref, refn);
-    json_string_value(json, "ipv4", ip, ipn);
+
+    /* Keys are intentionally searched in the shared nested JSON snapshot. */
+    json_string_value(json, "fix", t->fix, sizeof(t->fix));
+    json_string_value(json, "utc", t->utc, sizeof(t->utc));
+    json_string_value(json, "state", t->ntp, sizeof(t->ntp));
+    json_string_value(json, "reference", t->ref, sizeof(t->ref));
+    json_string_value(json, "leap_status", t->leap, sizeof(t->leap));
+    json_string_value(json, "last_offset", t->last_offset, sizeof(t->last_offset));
+    json_string_value(json, "rms_offset", t->rms_offset, sizeof(t->rms_offset));
+    json_string_value(json, "ipv4", t->ip, sizeof(t->ip));
+    json_string_value(json, "gateway", t->gateway, sizeof(t->gateway));
+    json_string_value(json, "dns", t->dns, sizeof(t->dns));
+    json_string_value(json, "assert", t->pps_assert, sizeof(t->pps_assert));
+    json_string_value(json, "clear", t->pps_clear, sizeof(t->pps_clear));
+    json_string_value(json, "rtc", t->rtc, sizeof(t->rtc));
+    t->pps_present = json_bool_value(json, "device");
+
+    t->have_lat = json_number(json, "latitude", &t->latitude);
+    t->have_lon = json_number(json, "longitude", &t->longitude);
+    t->have_alt = json_number(json, "altitude_m", &t->altitude);
+    t->have_speed = json_number(json, "speed_mps", &t->speed);
+    t->have_course = json_number(json, "course_deg", &t->course);
+    t->have_hdop = json_number(json, "hdop", &t->hdop);
+    t->have_vdop = json_number(json, "vdop", &t->vdop);
+    t->have_pdop = json_number(json, "pdop", &t->pdop);
+    t->have_uptime = json_number(json, "uptime_seconds", &t->uptime);
+    double value;
+    if (json_number(json, "satellites_reported", &value)) {
+        t->satellites = (int)value;
+        t->have_satellites = 1;
+    }
+    if (json_number(json, "stratum", &value)) {
+        t->stratum = (int)value;
+        t->have_stratum = 1;
+    }
 }
 
 static void get_ip(char *out, size_t n) {
@@ -212,43 +268,72 @@ static void set_backlight(int on) {
     closedir(d);
 }
 
-static void draw_status(struct screen *s, int page, const char *ip,
-                        const char *fix, const char *utc,
-                        const char *ntp, const char *ref) {
+static void draw_status(struct screen *s, int page, const struct telemetry *t) {
     uint32_t bg=rgb(7,18,32,&s->var), panel=rgb(15,39,59,&s->var);
     uint32_t white=rgb(238,245,250,&s->var), accent=rgb(20,190,170,&s->var);
     uint32_t muted=rgb(140,170,190,&s->var);
-    char line[80], utc_short[24];
+    char line[80], value[64];
     time_t now=time(NULL); struct tm tmv; localtime_r(&now,&tmv);
-    snprintf(utc_short,sizeof(utc_short),"%.19s",utc);
     rect(s,0,0,s->var.xres,s->var.yres,bg);
     rect(s,0,0,s->var.xres,42,panel);
-    text(s,12,12,"YSPEED GNSS NTP",2,accent);
+
     if (page == 0) {
-        text(s,12,52,"LOCAL SYSTEM TIME",1,muted);
-        strftime(line,sizeof(line),"%H:%M:%S",&tmv); text(s,12,70,line,3,white);
-        strftime(line,sizeof(line),"%Y-%m-%d",&tmv); text(s,12,104,line,2,white);
-        rect(s,10,137,s->var.xres-20,2,accent);
-        text(s,12,147,"ETHERNET",1,muted); text(s,12,163,ip,1,white);
-        text(s,12,185,"GNSS FIX",1,muted); text(s,12,201,fix,2,white);
-        text(s,12,228,"RECEIVER UTC",1,muted); text(s,12,244,utc_short,1,white);
-        text(s,12,267,"CHRONY",1,accent); text(s,12,283,ntp,1,white);
-        text(s,12,300,ref,1,muted);
+        text(s,12,12,"GNSS POSITION",2,accent);
+        strftime(line,sizeof(line),"%H:%M:%S",&tmv);
+        text(s,12,54,"LOCAL TIME",1,muted); text(s,12,70,line,2,white);
+        snprintf(line,sizeof(line),"FIX %s",t->fix); text(s,12,106,line,1,accent);
+        if (t->have_satellites) snprintf(line,sizeof(line),"SATELLITES %d",t->satellites);
+        else snprintf(line,sizeof(line),"SATELLITES UNAVAILABLE");
+        text(s,12,130,line,1,white);
+        snprintf(line,sizeof(line),"UTC %.19s",t->utc); text(s,12,158,line,1,white);
+        if (t->have_lat) snprintf(value,sizeof(value),"LAT %.6f",t->latitude);
+        else snprintf(value,sizeof(value),"LAT UNAVAILABLE");
+        text(s,12,190,value,1,white);
+        if (t->have_lon) snprintf(value,sizeof(value),"LON %.6f",t->longitude);
+        else snprintf(value,sizeof(value),"LON UNAVAILABLE");
+        text(s,12,214,value,1,white);
+        if (t->have_alt) snprintf(value,sizeof(value),"ALT %.1fM",t->altitude);
+        else snprintf(value,sizeof(value),"ALT UNAVAILABLE");
+        text(s,12,238,value,1,white);
+        text(s,12,292,"UP DOWN CHANGE PAGE",1,muted);
     } else if (page == 1) {
-        text(s,12,56,"GNSS STATUS",2,accent);
-        text(s,12,94,"FIX MODE",1,muted); text(s,12,112,fix,2,white);
-        text(s,12,154,"RECEIVER UTC",1,muted); text(s,12,172,utc_short,1,white);
-        text(s,12,214,"SATELLITE FIX REQUIRES",1,muted);
-        text(s,12,232,"A CONNECTED ANTENNA",1,muted);
-        text(s,12,286,"UP/DOWN: PAGES",1,accent);
-        text(s,12,302,"ENTER: SELECT",1,accent);
+        text(s,12,12,"GNSS QUALITY",2,accent);
+        if (t->have_hdop) snprintf(line,sizeof(line),"HDOP %.2f",t->hdop);
+        else snprintf(line,sizeof(line),"HDOP UNAVAILABLE");
+        text(s,12,58,line,1,white);
+        if (t->have_vdop) snprintf(line,sizeof(line),"VDOP %.2f",t->vdop);
+        else snprintf(line,sizeof(line),"VDOP UNAVAILABLE");
+        text(s,12,82,line,1,white);
+        if (t->have_pdop) snprintf(line,sizeof(line),"PDOP %.2f",t->pdop);
+        else snprintf(line,sizeof(line),"PDOP UNAVAILABLE");
+        text(s,12,106,line,1,white);
+        if (t->have_speed) snprintf(line,sizeof(line),"SPEED %.2f MPS",t->speed);
+        else snprintf(line,sizeof(line),"SPEED UNAVAILABLE");
+        text(s,12,142,line,1,white);
+        if (t->have_course) snprintf(line,sizeof(line),"COURSE %.1f DEG",t->course);
+        else snprintf(line,sizeof(line),"COURSE UNAVAILABLE");
+        text(s,12,166,line,1,white);
+        snprintf(line,sizeof(line),"PPS %s",t->pps_present ? "PRESENT" : "NOT FOUND");
+        text(s,12,202,line,1,t->pps_present ? accent : muted);
+        snprintf(line,sizeof(line),"ASSERT %.20s",t->pps_assert); text(s,12,226,line,1,white);
+        snprintf(line,sizeof(line),"CLEAR %.20s",t->pps_clear); text(s,12,250,line,1,white);
+        snprintf(line,sizeof(line),"RTC %.19s",t->rtc); text(s,12,278,line,1,muted);
     } else {
-        text(s,12,56,"NETWORK AND TIME",2,accent);
-        text(s,12,94,"ETHERNET ADDRESS",1,muted); text(s,12,112,ip,1,white);
-        text(s,12,154,"CHRONY STATE",1,muted); text(s,12,172,ntp,2,white);
-        text(s,12,214,"REFERENCE",1,muted); text(s,12,232,ref,1,white);
-        text(s,12,276,"LOCAL NTP SERVICE",1,accent);
-        text(s,12,294,"UDP PORT 123",1,white);
+        text(s,12,12,"NTP AND NETWORK",2,accent);
+        snprintf(line,sizeof(line),"NTP %s",t->ntp); text(s,12,54,line,1,accent);
+        snprintf(line,sizeof(line),"REF %.28s",t->ref); text(s,12,78,line,1,white);
+        if (t->have_stratum) snprintf(line,sizeof(line),"STRATUM %d",t->stratum);
+        else snprintf(line,sizeof(line),"STRATUM UNAVAILABLE");
+        text(s,12,102,line,1,white);
+        snprintf(line,sizeof(line),"LEAP %.24s",t->leap); text(s,12,126,line,1,white);
+        snprintf(line,sizeof(line),"OFFSET %.24s",t->last_offset); text(s,12,150,line,1,white);
+        snprintf(line,sizeof(line),"RMS %.24s",t->rms_offset); text(s,12,174,line,1,white);
+        snprintf(line,sizeof(line),"IP %.28s",t->ip); text(s,12,210,line,1,white);
+        snprintf(line,sizeof(line),"GW %.28s",t->gateway); text(s,12,234,line,1,muted);
+        snprintf(line,sizeof(line),"DNS %.26s",t->dns); text(s,12,258,line,1,muted);
+        if (t->have_uptime) snprintf(line,sizeof(line),"UPTIME %.0fS",t->uptime);
+        else snprintf(line,sizeof(line),"UPTIME UNAVAILABLE");
+        text(s,12,286,line,1,accent);
     }
 }
 
@@ -289,8 +374,7 @@ int main(void) {
     int bottom_down=0;
     struct timespec bottom_start={0};
     time_t refresh_at=0;
-    char ip[64]="NO ADDRESS",fix[32]="NO TELEMETRY",utc[64]="UNAVAILABLE";
-    char ntp[32]="UNAVAILABLE",ref[32]="NONE";
+    struct telemetry telemetry={0};
     if(keyfd<0) fprintf(stderr,"gpio-keys evdev device not found; display remains available without button navigation\n");
 
     for(;;) {
@@ -333,11 +417,11 @@ int main(void) {
 
         time_t now=time(NULL);
         if(now>=refresh_at) {
-            get_shared_status(fix,sizeof(fix),utc,sizeof(utc),ntp,sizeof(ntp),ref,sizeof(ref),ip,sizeof(ip));
+            get_shared_status(&telemetry);
             refresh_at=now+2;
         }
         if(setup) draw_setup(&s,selected,backlight,rotation);
-        else draw_status(&s,page,ip,fix,utc,ntp,ref);
+        else draw_status(&s,page,&telemetry);
         usleep(100000);
     }
     return 0;
