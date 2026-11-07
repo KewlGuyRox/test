@@ -46,6 +46,31 @@ cp -a "$PROJECT_DIR/package/yspeed-display" "$SRC/package/"
 sh "$PROJECT_DIR/scripts/append-profile.sh" "$SRC"
 sh "$PROJECT_DIR/scripts/disable-wireless-defaults.sh" "$SRC"
 
+# The ramips target globally selects gpio-button-hotplug in DEFAULT_PACKAGES.
+# That driver claims the gpio-keys DT node and rejects KEY_UP/KEY_DOWN codes.
+# Remove only that default in this disposable YSPEED source checkout; retain
+# the native kmod-input-gpio-keys + kmod-input-evdev stack selected below.
+python3 - "$SRC/target/linux/ramips/Makefile" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+old = "DEFAULT_PACKAGES += kmod-leds-gpio kmod-gpio-button-hotplug"
+new = "DEFAULT_PACKAGES += kmod-leds-gpio"
+if old in s:
+    s = s.replace(old, new, 1)
+elif new not in s or "kmod-gpio-button-hotplug" in s:
+    raise SystemExit("Could not safely remove ramips gpio-button-hotplug default")
+p.write_text(s)
+if "DEFAULT_PACKAGES += kmod-leds-gpio kmod-gpio-button-hotplug" in s:
+    raise SystemExit("Legacy gpio-button-hotplug remains in ramips DEFAULT_PACKAGES")
+PY
+grep -qF 'cs-gpios = <0>, <&gpio 6 GPIO_ACTIVE_LOW>;' "$PROJECT_DIR/board/mt7628an_yspeed_ys-gps-12832.dts" || {
+  echo "ST7789 GPIO6 chip-select mapping is missing" >&2; exit 4;
+}
+! grep -qF 'spi_cs1_pins' "$PROJECT_DIR/board/mt7628an_yspeed_ys-gps-12832.dts" || {
+  echo "Native SPI CS1 pinmux conflicts with vendor GPIO6 chip select" >&2; exit 4;
+}
+
 # Build the framebuffer core and ST7789V modules without the generic
 # kmod-fb package's @DISPLAY_SUPPORT dependency (not enabled by mt76x8).
 KERNEL_CONFIG="$SRC/target/linux/ramips/mt76x8/config-6.12"
@@ -219,7 +244,7 @@ DTB="$(find "$SRC/build_dir" -type f -name 'image-mt7628an_yspeed_ys-gps-12832.d
 [[ -x "$DTC" && -n "$DTB" ]] || { echo "Compiled DTB or host dtc not found" >&2; exit 6; }
 mkdir -p "$WORKDIR/artifacts"
 "$DTC" -I dtb -O dts "$DTB" > "$WORKDIR/artifacts/yspeed-compiled.dts"
-for token in 'YSPEED YS-GPS-12832' 'pps-gpio' 'dallas,ds1307' 'denx,uimage' 'yspeed,ys-gps-12832' 'mac-address@2e' 'sitronix,st7789v' 'display@1' 'pinctrl-0' 'LCD Up' 'LCD Enter' 'LCD Down'; do
+for token in 'YSPEED YS-GPS-12832' 'pps-gpio' 'dallas,ds1307' 'denx,uimage' 'yspeed,ys-gps-12832' 'mac-address@2e' 'sitronix,st7789v' 'display@1' 'pinctrl-0' 'cs-gpios' 'LCD Up' 'LCD Enter' 'LCD Down'; do
   grep -qF "$token" "$WORKDIR/artifacts/yspeed-compiled.dts" || { echo "DTB check missing: $token" >&2; exit 7; }
 done
 # The ribbon-connected panel is the ST7789V only. The old vendor SH1106
