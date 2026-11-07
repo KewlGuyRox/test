@@ -43,6 +43,13 @@ official 25.12.6 `feeds.buildinfo`.
   USB 2.0/OHCI host support is retained because it is present in the vendor DTB.
 - GNSS UART1 remains at its existing 9600-baud setting. No receiver commands
   or baud-rate changes are performed.
+- The GPS antenna is currently disconnected; no satellite fix is expected
+  during bench testing. Receiver serial output and PPS electrical activity
+  remain separate checks and must not be conflated with satellite reception.
+- The vendor display package is a stripped LVGL binary, not available source.
+  It referenced `/gps_data_shm` and its legacy UCI file names `/dev/ttyS2` at
+  9600 baud. The current build's GPSD path is `/dev/ttyS1`; do not silently
+  switch UARTs until the board routing is verified.
 - PPS is GPIO11 active-high. GPS/PPS Chrony refclocks remain `noselect` until
   UTC-second association is verified.
 - DS1307 RTC is at I2C `0x68`. The ribbon-connected display is a 240x320
