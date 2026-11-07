@@ -109,6 +109,11 @@ reintroduces the legacy button driver even when the YSPEED device profile
 excludes it. `rpcd-mod-iwinfo` may remain as a LuCI RPC integration dependency;
 it does not enable a radio or load a wireless driver.
 
+Do not run the archived `apply-final-patch.sh` helper from earlier work:
+it explicitly selects `CONFIG_PACKAGE_kmod-gpio-button-hotplug=y` and
+reintroduces the exact driver conflict fixed here. The canonical build entry
+point is `scripts/build.sh`.
+
 The script:
 
 1. Checks out the signed OpenWrt `v25.12.6` tag.
