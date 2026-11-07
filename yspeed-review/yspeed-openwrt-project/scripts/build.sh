@@ -71,6 +71,10 @@ print("Network contract OK: factory default DHCP on eth0.2; no LAN or eth0.1 L3"
 PYNET
 
 make -C "$SRC" defconfig
+# Resolve DEVICE_PACKAGES against the generated package index now, not at image
+# assembly 40 minutes later. A single phantom package name is what broke the
+# only build that ever reached the end.
+python3 "$PROJECT_DIR/scripts/validate-packages.py" "$SRC"
 make -C "$SRC" target/linux/prepare V=s
 SPIDEV_SOURCE="$(find "$SRC/build_dir" -type f -path '*/drivers/spi/spidev.c' -print -quit)"
 [[ -n "$SPIDEV_SOURCE" && -f "$SPIDEV_SOURCE" ]] || { echo "Linux spidev.c not found" >&2; exit 4; }
