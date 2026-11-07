@@ -5,6 +5,8 @@ assistants collaborating on the replacement firmware. It separates evidence,
 implementation state, unresolved questions, and safe next actions. Do not treat
 a claim as verified merely because it appears in this document.
 
+**Collaboration protocol:** this branch and PR are the shared engineering handoff for ChatGPT and DeepSeek. Before editing, re-read the current branch head and relevant files; preserve evidence with dates and raw outputs; label facts as historical hardware verification, source inspection, or current-build validation. Do not silently overwrite another collaborator's work. The shared PR discussion is the coordination channel for review findings and disagreements.
+
 Companion documents:
 
 - `VENDOR-INVENTORY.md` — recovered vendor functions and feature-parity gaps.
@@ -20,7 +22,7 @@ OpenWrt while retaining the useful GNSS, NTP, LCD, and management functions.
 
 - **RAM boot only.** No flash writes, `sysupgrade`, `saveenv`, erase, or factory
   image operations. Do not write persistent storage.
-- **Single Ethernet uplink:** WAN port `eth0.2`, ordinary DHCP including gateway and DNS; LuCI can configure static IPv4.
+- **Single Ethernet uplink:** WAN port `eth0.2`; DHCP supplies the address only. Do not accept a DHCP default route or DNS (`defaultroute '0'`, `peerdns '0'`). LuCI can configure static IPv4.
 - No LAN bridge, no `192.168.88.1/24`, and no wireless packages/radio.
 - Keep all UI and system messages in English.
 
@@ -35,14 +37,14 @@ hardware changes.
 | SoC / target | MT7628AN, `ramips/mt76x8` | Vendor DTB |
 | Flash layout | u-boot 0x0; env 0x30000; factory 0x40000; firmware 0x50000 | Flash dump; never write these partitions |
 | Console | `ttyS0`, 57600 8N1 | Vendor chosen bootargs / U-Boot environment |
-| WAN | `eth0.2`, DHCP | Vendor network config; replacement accepts normal DHCP route and DNS, with static WAN available in LuCI |
+| WAN | `eth0.2`, DHCP address only | Project requirement: do not install a DHCP-provided default route or DNS; static WAN remains available in LuCI |
 | Switch VLANs | VLAN1 `1 2 3 4 6t`; VLAN2 `0 6t` | Vendor DTB/config; verify on-device |
 | MAC cells | `…:09` at 0x04, `…:0a` at 0x28, `…:0b` at 0x2e | Flash factory-partition analysis |
 | Deployed WAN MAC | `…:0b` from offset 0x2e | Vendor UCI override; confirm replacement uses this value |
 | LCD | ST7789, 240x320, hardware SPI0 CS1, 40 MHz, `/dev/spidev0.1` | Vendor DTB + vendor binary strings |
 | LCD control pins | D/C GPIO16, reset GPIO14, backlight GPIO19 | Vendor config comments |
 | Keys | GPIO18/23/26 | Vendor DTB/config; kernel input ownership is intended |
-| PPS | GPIO11 active-high | Vendor DTB; electrical operation not yet validated |
+| PPS | GPIO11 active-high | Vendor DTB plus November 4, 2026 bench evidence: recurring ~1 Hz assertions captured by `ppstest /dev/pps0`; replacement-build regression still pending |
 | RTC | DS1307 at I2C 0x68 | Vendor DTB |
 | Status LED | GPIO44 active-low | Vendor DTB |
 | Reset button | GPIO38 active-low | Vendor DTB |
@@ -66,7 +68,7 @@ Never export a line already owned by a kernel driver.
 
 ### PPS status
 
-Vendor configuration reportedly shipped with `pps_enabled '0'`; physical PPS remains unvalidated. The replacement config enables GNSS/PPS with NIST and Cloudflare fallbacks. The antenna is disconnected, so no fix or PPS lock is expected during current bench work; validate UART and source selection with the antenna attached.
+Vendor configuration reportedly shipped with `pps_enabled '0'`, but that setting must not be confused with the observed hardware behavior. On **November 4, 2026**, with the GNSS antenna connected and receiver healthy (3D fix, 18 visible satellites, `ANTENNA OK`), `ppstest /dev/pps0` captured consecutive assertions `1793832431.508000420#245936`, `1793832432.507999592#245937`, and `1793832433.508000219#245938`; a later sysfs read was `1793832435.508000293#245940`. This establishes recurring ~1 Hz electrical edges reaching the Linux GPIO/PPS path. It is not an oscilloscope voltage/pulse-shape measurement, and UTC edge alignment was not established. The current replacement build still needs a PPS regression test and Chrony source/lock validation. The antenna is disconnected during current bench work, so no new fix/PPS events are expected now.
 
 ## 3. Data architecture
 
@@ -90,7 +92,7 @@ actual `yspeed-status` output before relying on it.
 | LCD renderer | `package/yspeed-display/src/yspeed-display.c` | Source includes satellite page and settings key behavior; panel/GPIO operation still needs hardware validation |
 | Status JSON | `files/usr/sbin/yspeed-status` | Source claims satellite/fix fields; test actual output and schema |
 | Chrony | `files/etc/chrony/chrony.conf` | Configuration is not proof of synchronization; test with network and receiver |
-| Network | `files/etc/config/network` | Standard DHCP route and DNS are enabled; static IPv4 is supported through LuCI |
+| Network | `files/etc/config/network` | **Known blocker:** current source has `defaultroute '1'` and `peerdns '1'`, violating the address-only DHCP requirement; change both to `0` and validate runtime routes/resolvers |
 | Firewall | `files/etc/config/firewall` | Inspect final rules and verify UDP/123 exposure is intentional |
 | Build gate | `scripts/validate-initramfs.py`, `scripts/validate-uimage.py` | Validators must pass on the exact artifact |
 | CI | `.github/workflows/yspeed-ramboot-build.yml` | Build success and artifact publication are separate states; check run logs/artifacts |
@@ -125,7 +127,7 @@ successful kernel compile. A published artifact is not proof it boots.
 | Unknown | Required evidence |
 |---|---|
 | Which UART carries GNSS | Vendor paths disagree (`ttyS1` vs `ttyS2`). Test each with receiver attached and capture NMEA at supported baud rates; do not guess. |
-| PPS electrical/runtime behavior | Receiver fix plus observed once-per-second assertion increments on the actual PPS device |
+| PPS replacement-build regression | Historical hardware path was verified November 4; repeat once-per-second `/dev/pps0` assertions on the replacement image, then separately validate Chrony PPS selection/lock |
 | LCD GPIO controller mapping | Live gpiochip base/label/device inventory and verified offsets |
 | LCD panel initialization | Compare vendor init sequence where recoverable; test reset, command/data, RGB565, offsets, rotation and backlight on the actual panel |
 | LCD key mapping and long presses | Record each physical button's evdev code and timing behavior |
@@ -158,7 +160,7 @@ Never use `saveenv`.
 
 ## 8. Work order
 
-1. Verify ordinary WAN DHCP on eth0.2 accepts the assigned address, gateway and DNS; confirm LuCI can switch to a static address.
+1. Fix WAN DHCP to accept the assigned address only (`defaultroute '0'`, `peerdns '0'`); verify no DHCP default route or DNS is installed, and confirm LuCI can switch to static addressing.
 2. Get a green CI build and capture the exact artifact/commit/run evidence.
 3. Validate image format, rootfs contents, DTB, kernel config and package list.
 4. Resolve U-Boot memory layout and approve a safe RAM-boot address.
@@ -166,7 +168,7 @@ Never use `saveenv`.
 6. Validate SPI device and GPIO controller mapping before driving the panel.
 7. Test LCD initialization, orientation, colors, keys, and backlight.
 8. Verify chrony service and NTP client response on the bench network.
-9. With antenna attached: identify UART, confirm GNSS fix, and validate PPS lock/source selection against NIST/Cloudflare.
+9. With antenna attached: identify UART, repeat the historically successful ~1 Hz `/dev/pps0` assertion test, and separately validate Chrony PPS source selection/lock against NIST/Cloudflare.
 10. Verify LCD menu, long-press behavior and satellite list; keep `yspeed-status` as the shared data source.
 
 **Safety rule:** no persistent flash writes under any circumstances unless the
