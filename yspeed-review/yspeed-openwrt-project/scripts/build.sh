@@ -90,12 +90,8 @@ PY
 DISPLAY_SOURCE="$PROJECT_DIR/package/yspeed-display/src/yspeed-display.c"
 grep -q '/dev/spidev0.1' "$DISPLAY_SOURCE" || { echo "SPI userspace app missing spidev device" >&2; exit 5; }
 if grep -q '/dev/fb0' "$DISPLAY_SOURCE"; then echo "Framebuffer dependency remains" >&2; exit 5; fi
-make -C "$SRC" target/linux/compile V=s -j"$JOBS"
-KERNEL_DOTCONFIG="$(find "$SRC/build_dir" -type f -path '*/linux-*/.config' -print -quit)"
-[[ -n "$KERNEL_DOTCONFIG" ]] || { echo "Resolved kernel .config not found" >&2; exit 5; }
-for symbol in CONFIG_SPI_SPIDEV CONFIG_GPIO_SYSFS CONFIG_SPI_MT7621; do
-  grep -qx "$symbol=y" "$KERNEL_DOTCONFIG" || { echo "Required kernel symbol missing: $symbol" >&2; exit 5; }
-done
+# Let the top-level build construct the host tools and cross toolchain before
+# compiling the kernel. Calling target/linux/compile directly skips that order.
 grep -qx 'CONFIG_TARGET_ROOTFS_INITRAMFS=y' "$SRC/.config" || { echo "INITRAMFS profile missing" >&2; exit 6; }
 grep -qx 'CONFIG_TARGET_DEVICE_ramips_mt76x8_DEVICE_yspeed_ys-gps-12832=y' "$SRC/.config" || { echo "YSPEED profile missing" >&2; exit 6; }
 for package in yspeed-display dropbear uhttpd gpsd gpsd-clients chrony jsonfilter kmod-input-gpio-keys kmod-input-evdev; do
@@ -104,6 +100,13 @@ done
 if grep -q '^CONFIG_PACKAGE_kmod-gpio-button-hotplug=y$' "$SRC/.config"; then echo "Conflicting gpio-button-hotplug selected" >&2; exit 6; fi
 if grep -Eq '^CONFIG_PACKAGE_(wpad[^=]*|iw|kmod-mt7603(e)?|kmod-mac80211|kmod-mt76-core|wireless-regdb)=(y|m)$' "$SRC/.config"; then echo "Wireless package selected" >&2; exit 6; fi
 make -C "$SRC" -j"$JOBS" V=s
+
+# Validate the resolved kernel configuration after the normal top-level build.
+KERNEL_DOTCONFIG="$(find "$SRC/build_dir" -type f -path '*/linux-*/.config' -print -quit)"
+[[ -n "$KERNEL_DOTCONFIG" ]] || { echo "Resolved kernel .config not found" >&2; exit 5; }
+for symbol in CONFIG_SPI_SPIDEV CONFIG_GPIO_SYSFS CONFIG_SPI_MT7621; do
+  grep -qx "$symbol=y" "$KERNEL_DOTCONFIG" || { echo "Required kernel symbol missing: $symbol" >&2; exit 5; }
+done
 
 OUT="$SRC/bin/targets/ramips/mt76x8"
 IMAGE="$(find "$OUT" -maxdepth 1 -type f -name '*yspeed_ys-gps-12832-initramfs-kernel.bin' -print -quit)"
