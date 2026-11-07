@@ -70,6 +70,7 @@ for entry in \
   'CONFIG_FB_TFT=m' \
   'CONFIG_FB_TFT_ST7789V=m'; do
   grep -qxF "$entry" "$KERNEL_CONFIG" || printf '%s\n' "$entry" >> "$KERNEL_CONFIG"
+done
 
 VIDEO_MK="$SRC/package/kernel/linux/modules/video.mk"
 if ! grep -qF 'KernelPackage/fb-tft-yspeed' "$VIDEO_MK"; then
