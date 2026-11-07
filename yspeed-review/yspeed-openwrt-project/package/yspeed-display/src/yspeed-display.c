@@ -207,7 +207,7 @@ static void set_backlight(int on) {
         char path[256];
         snprintf(path, sizeof(path), "/sys/class/backlight/%s/bl_power", e->d_name);
         FILE *f = fopen(path, "w");
-        if (f) { fprintf(f, "%d\n", on ? 0 : 1); fclose(f); }
+        if (f) { fprintf(f, "%d\n", on ? 0 : 4); fclose(f); }
     }
     closedir(d);
 }
@@ -288,6 +288,9 @@ int main(void) {
     int keyfd=open_keys(), page=0, setup=0, selected=0, backlight=1, rotation=0;
     int bottom_down=0;
     struct timespec bottom_start={0};
+    time_t refresh_at=0;
+    char ip[64]="NO ADDRESS",fix[32]="NO TELEMETRY",utc[64]="UNAVAILABLE";
+    char ntp[32]="UNAVAILABLE",ref[32]="NONE";
     if(keyfd<0) fprintf(stderr,"gpio-keys evdev device not found; display remains available without button navigation\n");
 
     for(;;) {
@@ -328,8 +331,11 @@ int main(void) {
             }
         } else usleep(100000);
 
-        char ip[64],fix[32],utc[64],ntp[32],ref[32];
-        get_shared_status(fix,sizeof(fix),utc,sizeof(utc),ntp,sizeof(ntp),ref,sizeof(ref),ip,sizeof(ip));
+        time_t now=time(NULL);
+        if(now>=refresh_at) {
+            get_shared_status(fix,sizeof(fix),utc,sizeof(utc),ntp,sizeof(ntp),ref,sizeof(ref),ip,sizeof(ip));
+            refresh_at=now+2;
+        }
         if(setup) draw_setup(&s,selected,backlight,rotation);
         else draw_status(&s,page,ip,fix,utc,ntp,ref);
         usleep(100000);
