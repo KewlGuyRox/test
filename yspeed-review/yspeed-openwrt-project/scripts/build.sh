@@ -210,7 +210,18 @@ chmod 0755 "$PROJECT_DIR/files/usr/sbin/yspeed-status" \
   "$PROJECT_DIR/files/usr/sbin/yspeed-apply-update" \
   "$PROJECT_DIR/files/www/cgi-bin/yspeed-status" \
   "$PROJECT_DIR/files/etc/uci-defaults/"* 2>/dev/null || true
-tar -czf "$WORKDIR/artifacts/yspeed-rack-update.tar.gz" -C "$PROJECT_DIR/files" .
+UPDATE_ROOT="$WORKDIR/yspeed-rack-update-root"
+rm -rf "$UPDATE_ROOT"
+mkdir -p "$UPDATE_ROOT/etc/chrony" "$UPDATE_ROOT/usr/sbin" \
+  "$UPDATE_ROOT/www/cgi-bin" "$UPDATE_ROOT/www/yspeed"
+# Deliberately exclude /etc/config/network and firewall so a rack-side patch
+# can never overwrite operator-specific IP, gateway, DNS or security settings.
+cp "$PROJECT_DIR/files/etc/chrony/chrony.conf" "$UPDATE_ROOT/etc/chrony/"
+cp "$PROJECT_DIR/files/usr/sbin/yspeed-status" "$UPDATE_ROOT/usr/sbin/"
+cp "$PROJECT_DIR/files/usr/sbin/yspeed-apply-update" "$UPDATE_ROOT/usr/sbin/"
+cp "$PROJECT_DIR/files/www/cgi-bin/yspeed-status" "$UPDATE_ROOT/www/cgi-bin/"
+cp "$PROJECT_DIR/files/www/yspeed/index.html" "$UPDATE_ROOT/www/yspeed/"
+tar -czf "$WORKDIR/artifacts/yspeed-rack-update.tar.gz" -C "$UPDATE_ROOT" .
 sha256sum "$WORKDIR/artifacts/yspeed-rack-update.tar.gz" > "$WORKDIR/artifacts/yspeed-rack-update.tar.gz.sha256"
 
 # Enforce that no flashable output is published by this RAM-only profile.
