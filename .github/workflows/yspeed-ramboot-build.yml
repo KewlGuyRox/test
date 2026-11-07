@@ -19,7 +19,8 @@ concurrency:
   group: yspeed-openwrt-ramboot-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:  build:
+jobs:
+  build:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
