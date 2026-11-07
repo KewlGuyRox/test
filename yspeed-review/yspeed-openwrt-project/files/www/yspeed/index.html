@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>YSPEED GNSS NTP</title>
+<style>
+:root{color-scheme:dark;font:16px system-ui,sans-serif;background:#0b1420;color:#e8f0f7}
+body{max-width:1050px;margin:0 auto;padding:22px}
+h1{font-size:1.5rem;margin:0}.sub{color:#9fb2c4;margin:5px 0 20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+section{background:#142638;border:1px solid #28445b;border-radius:12px;padding:16px}
+h2{font-size:1rem;color:#8bd8d0;margin:0 0 12px}
+.big{font-size:2rem;font-weight:650;margin:3px 0 12px}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid #294052}
+.kv span:first-child{color:#9fb2c4}.kv span:last-child{text-align:right;overflow-wrap:anywhere}
+.state{display:inline-block;padding:4px 9px;border-radius:20px;background:#34485a}
+.good{background:#155b48}.warn{background:#70501b}.bad{background:#702e35}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.78rem;color:#c3d3df;max-height:180px;overflow:auto}
+footer{color:#8da3b6;font-size:.8rem;margin-top:16px}
+</style>
+</head>
+<body>
+<h1>YSPEED GNSS NTP</h1>
+<div class="sub">Live device telemetry · refreshes every 2 seconds</div>
+<div class="grid">
+<section><h2>GNSS POSITION</h2><div id="fix" class="big">Loading…</div>
+<div class="kv"><span>Receiver UTC</span><span id="utc">—</span></div>
+<div class="kv"><span>UTC valid</span><span id="utcvalid">—</span></div>
+<div class="kv"><span>Latitude</span><span id="lat">—</span></div>
+<div class="kv"><span>Longitude</span><span id="lon">—</span></div>
+<div class="kv"><span>Altitude</span><span id="alt">—</span></div>
+<div class="kv"><span>Satellites reported</span><span id="sats">—</span></div></section>
+<section><h2>NTP DISCIPLINE</h2><div id="ntpstate" class="big">—</div>
+<div class="kv"><span>Selected reference</span><span id="ref">—</span></div>
+<div class="kv"><span>Stratum</span><span id="stratum">—</span></div>
+<div class="kv"><span>Leap status</span><span id="leap">—</span></div>
+<div class="kv"><span>Last offset</span><span id="offset">—</span></div>
+<div class="kv"><span>RMS offset</span><span id="rms">—</span></div></section>
+<section><h2>PPS AND RTC</h2><div class="kv"><span>PPS device</span><span id="ppsdev">—</span></div>
+<div class="kv"><span>Last assert</span><span id="assert">—</span></div>
+<div class="kv"><span>RTC read</span><span id="rtc">—</span></div>
+<p class="sub">PPS presence is not proof of UTC-second alignment. Precision use remains disabled until validated.</p></section>
+<section><h2>ETHERNET</h2><div class="kv"><span>Interface</span><span>eth0.2</span></div>
+<div class="kv"><span>IPv4</span><span id="ip">—</span></div>
+<div class="kv"><span>Gateway</span><span id="gw">—</span></div>
+<div class="kv"><span>DNS</span><span id="dns">—</span></div>
+<div class="kv"><span>Uptime</span><span id="uptime">—</span></div></section>
+<section style="grid-column:1/-1"><h2>CHRONY SOURCE DETAILS</h2><pre id="sources">Waiting for chronyd…</pre></section>
+</div>
+<footer>Values are reported by the device. Missing data is shown as unavailable; no simulated satellite or timing values are generated. Last update: <span id="updated">—</span></footer>
+<script>
+const el=id=>document.getElementById(id);
+const show=(id,v)=>el(id).textContent=(v===null||v===undefined||v===""?"Unavailable":v);
+function state(id,value){const e=el(id);e.textContent=value||"Unavailable";e.className="big state "+(value==="SYNCED"||value==="3D"?"good":value==="2D"?"warn":"bad")}
+async function refresh(){
+ try{
+  const r=await fetch('/cgi-bin/yspeed-status',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);
+  const d=await r.json(),g=d.gnss||{},n=d.ntp||{},p=d.pps||{},net=d.network||{};
+  state('fix',g.fix);show('utc',g.utc);show('utcvalid',g.utc_valid?'YES':'NO');
+  show('lat',g.latitude);show('lon',g.longitude);show('alt',g.altitude_m===null?null:g.altitude_m+' m');show('sats',g.satellites_reported);
+  state('ntpstate',n.state);show('ref',n.reference);show('stratum',n.stratum);show('leap',n.leap_status);show('offset',n.last_offset);show('rms',n.rms_offset);
+  show('ppsdev',p.device?'present':'not detected');show('assert',p.assert);show('rtc',d.rtc);
+  show('ip',net.ipv4);show('gw',net.gateway);show('dns',net.dns);show('uptime',d.uptime_seconds===null?null:Math.floor(d.uptime_seconds)+' s');
+  show('sources',n.sources);show('updated',d.timestamp);
+ }catch(e){show('fix','STATUS API ERROR: '+e.message)}
+}
+refresh();setInterval(refresh,2000);
+</script>
+</body></html>
