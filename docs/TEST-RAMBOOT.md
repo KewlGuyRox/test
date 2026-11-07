@@ -78,8 +78,8 @@ Stop and retain the complete log.
 
 For PPS regression testing, do not treat `/dev/pps0` existing as a pass. With the antenna/receiver connected and a valid fix, run `ppstest /dev/pps0` and record several consecutive assertion timestamps and sequence numbers. Expect approximately one-second increments. Then independently inspect Chrony sources/tracking to establish whether PPS is selected and locked; kernel PPS events alone do not prove Chrony discipline.
 
-First verify the network contract. The device should obtain its DHCP address
-but must **not** install a DHCP-provided default route or DNS server.
+First verify the network contract. `eth0.2` should obtain its DHCP address,
+default gateway, and DNS settings from the upstream LAN.
 
 ```sh
 ip -4 addr show dev eth0.2
@@ -89,7 +89,7 @@ cat /etc/resolv.conf
 ip -4 addr show | grep -c '192.168.88'   # must print 0
 ```
 
-Expected: eth0.2 receives its DHCP address, but **no DHCP-provided default route and no DHCP-provided DNS server** are installed. `ip route` must show no default route learned from this WAN lease, and resolver files must not contain DHCP-learned nameservers. LuCI can change WAN to static addressing when required.
+Expected: eth0.2 receives its DHCP address, default route, and DNS settings from the upstream LAN. Verify them with `ip address`, `ip route`, and the active resolver configuration. LuCI can change WAN to static addressing when required.
 
 Then verify services:
 
@@ -144,7 +144,7 @@ For every attempt, record:
 - Artifact filename, byte size, and validator output.
 - U-Boot `bdinfo`, image header, and calculated memory ranges.
 - Full serial boot log.
-- Runtime IP, routes, resolver contents (confirm no DHCP route/DNS), SSH result.
+- Runtime IP, DHCP-provided route and DNS settings, SSH result.
 - SPI/GPIO inventory, display test observations, and (with antenna attached) `ppstest /dev/pps0` assertion timestamps plus Chrony PPS source/lock evidence.
 - Chrony listener and client query results.
 
