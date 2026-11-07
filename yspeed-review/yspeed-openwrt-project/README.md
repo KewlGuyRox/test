@@ -2,13 +2,13 @@
 
 ## Status
 
-This repository contains the build project and a **previous candidate RAM-boot
-uImage** under `artifacts/`. That candidate predates the source corrections in
-this branch and is not evidence that the corrected source has been rebuilt.
-The build script pins OpenWrt 25.12.6 and the package/LuCI feed commits recorded
-in the official 25.12.6 `feeds.buildinfo`. A fresh build must be run on an
-Internet-connected Linux x86-64 host; the current remote execution environment
-cannot run the full OpenWrt cross-build.
+This repository contains the YS-GPS-12832 RAM-boot build project. GitHub Actions
+build #73 completed successfully for commit `44d57f7eb6e6a267b31001cf2ad5f64377771c17`
+and published the `yspeed-ramboot-openwrt-25.12.6` artifact. A successful
+compile is not hardware validation: the ST7789 panel is still blank on the
+bench, and the three keys still require event-device verification. The build
+script pins OpenWrt 25.12.6 and the package/LuCI feed commits recorded in the
+official 25.12.6 `feeds.buildinfo`.
 
 ## Board and network assumptions
 
@@ -22,9 +22,10 @@ cannot run the full OpenWrt cross-build.
   owner's existing LAN. OpenWrt's logical network is named `wan` only to match
   the vendor-derived firewall/configuration references; that label does not
   mean the device is intended to be used as an Internet-edge router.
-- The `wan` logical interface binds to `eth0.2`, uses DHCP, and accepts its
-  address, gateway, and DNS from the owner's existing network. No static
-  management address is embedded.
+- The `wan` logical interface binds to `eth0.2` and uses DHCP for its IPv4
+  address. The current bench DHCP service intentionally supplies no gateway
+  or DNS; do not add either merely to make bench testing appear online. No
+  static management address is embedded.
 - `eth0.1` is the vendor-labeled LAN VLAN and is **not** a management or
   service interface in this project. It has no OpenWrt Layer-3 interface,
   address, DHCP server, bridge, or default route. The captured switch VLAN
@@ -45,14 +46,16 @@ cannot run the full OpenWrt cross-build.
 - PPS is GPIO11 active-high. GPS/PPS Chrony refclocks remain `noselect` until
   UTC-second association is verified.
 - DS1307 RTC is at I2C `0x68`. The ribbon-connected display is a 240x320
-  ST7789V SPI TFT. The board DTS now enables SPI0 CS1 and binds the ST7789V
+  ST7789V SPI TFT. The board DTS now enables SPI0 CS1 at the vendor-confirmed 40 MHz and binds the ST7789V
   framebuffer driver using the recovered GPIO map: D/C GPIO16, reset GPIO14,
   backlight GPIO19, with CS1 on the MT7628 SPI pinmux. The three front-panel
-  keys are GPIO18/23/26. A lightweight framebuffer dashboard is included and
-  starts at boot; it shows local time, the DHCP address on eth0.2, and GPSD
-  fix/coordinates. The reset/backlight electrical polarity and panel rotation
-  are initial conventional settings and must be confirmed during the first
-  RAM-only display test. The old compiled candidate artifacts still contain
+  keys are GPIO18/23/26 (top/bottom navigation and middle select). A long press
+  on the bottom key is reserved for the LCD setup menu. LCD text and menus are
+  English-only; Chinese language support is intentionally excluded. A
+  lightweight framebuffer dashboard is included and starts at boot; it shows
+  local time, the DHCP address on eth0.2, and GPSD fix/coordinates. The
+  reset/backlight electrical polarity and panel rotation must be confirmed
+  during the first RAM-only display test. The old compiled candidate artifacts still contain
   the obsolete SH1106 node and are not release artifacts.
 
 ## Why the image is RAM-boot-only
@@ -99,12 +102,13 @@ The script:
 
 ## Rack-side NTP service and telemetry
 
-- Ethernet DHCP accepts the address, default gateway and DNS offered by the
-  deployment DHCP server. The isolated bench network may intentionally offer
-  only an address; local NTP service does not require a gateway or DNS.
-- For static addressing, use LuCI **Network → Interfaces → WAN (eth0.2)** and
-  set the operator's address, mask, gateway and DNS. Do not create a second
-  Layer-3 interface or hard-code a subnet into the image.
+- The current bench DHCP service provides the device address only. No default
+  gateway or DNS is provided by design. SSH, the local web UI and local NTP
+  service do not require either. External NTP pools require a separate routed
+  network with DNS and are not expected to resolve on this isolated bench.
+- Do not add a gateway or DNS to the bench DHCP configuration. If the device is
+  later moved to a routed deployment network, configure that network's routing
+  and DNS deliberately; do not hard-code either into the image.
 - Chrony is the only NTP daemon. OpenWrt sysntpd is disabled at first boot.
   Chrony serves UDP/123 on eth0.2 to clients on any IPv4 subnet reaching that
   interface. The firewall has an explicit UDP/123 allow rule.
@@ -119,10 +123,11 @@ The script:
   endpoint reports GPSD fix mode and receiver UTC, Chrony tracking/source
   status, PPS sysfs counters, RTC readback, Ethernet address, gateway and DNS.
   Missing data is shown as unavailable; it is not synthesized.
-- The LCD application now consumes the same telemetry snapshot for fix, UTC,
-  Chrony source/state and Ethernet address. The physical ST7789 panel remains
-  a hardware validation item because the current framebuffer driver has not
-  yet produced visible pixels on the board.
+- The LCD application consumes the same telemetry snapshot for fix, UTC, Chrony
+  source/state and Ethernet address. The panel initialization now uses the
+  vendor-confirmed 40 MHz SPI clock, a generic ST7789V gamma profile, and a
+  software-reset delay. The physical panel remains a hardware validation item
+  because the current framebuffer driver has not yet produced visible pixels.
 
 ## Rack-side patch updates (no flash)
 
