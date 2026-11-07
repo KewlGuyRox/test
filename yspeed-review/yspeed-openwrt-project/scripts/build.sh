@@ -152,14 +152,22 @@ function uq(v) { gsub(/^["\047]|["\047]$/, "", v); return v }
 section == "interface" && name == "wan" && $1 == "option" {
   if ($2 == "device" && uq($3) == "eth0.2") device_ok=1
   if ($2 == "proto" && uq($3) == "dhcp") proto_ok=1
+  if ($2 == "defaultroute" && uq($3) == "0") no_default_route=1
+  if ($2 == "peerdns" && uq($3) == "0") no_peer_dns=1
+  if ($2 == "gateway" || $2 == "dns") bad=1
 }
+section == "interface" && name == "wan6" && $1 == "option" &&
+  $2 == "proto" && uq($3) == "none" { no_wan6=1 }
 section == "interface" && name == "lan" { bad=1 }
 section == "interface" && name != "loopback" && $1 == "option" && $2 == "ipaddr" { bad=1 }
 section == "interface" && name != "loopback" && $1 == "option" &&
   ($2 == "device" || $2 == "ifname") && uq($3) == "eth0.1" { bad=1 }
-END { if (!device_ok || !proto_ok || bad) exit 1 }
+END {
+  if (!device_ok || !proto_ok || !no_default_route || !no_peer_dns || !no_wan6 || bad)
+    exit 1
+}
 ' "$NETWORK_CONFIG" || {
-  echo "Network contract violation: require DHCP on eth0.2 only; no eth0.1 or other static L3 interface" >&2
+  echo "Network contract violation: require DHCP IP only on eth0.2, no default route/peer DNS, wan6 disabled, and no other L3 interface" >&2
   exit 4
 }
 make -C "$SRC" defconfig
