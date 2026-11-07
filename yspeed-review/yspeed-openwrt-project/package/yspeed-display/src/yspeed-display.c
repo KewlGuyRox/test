@@ -5,6 +5,9 @@
 #include <fcntl.h>
 #include <ifaddrs.h>
 #include <linux/fb.h>
+#include <linux/input.h>
+#include <dirent.h>
+#include <poll.h>
 #include <net/if.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -72,6 +75,7 @@ static void rect(struct screen *s, int x, int y, int w, int h, uint32_t c) {
     for (int yy=y; yy<y+h; yy++) for (int xx=x; xx<x+w; xx++) pixel(s,xx,yy,c);
 }
 static int glyph(char c) {
+    if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
     if (c >= 'A' && c <= 'Z') return c-'A';
     if (c >= '0' && c <= '9') return 26+c-'0';
     if (c == ' ') return 36;
@@ -171,6 +175,106 @@ static void get_gps(char *out, size_t n) {
     fclose(f);
     if(!found) snprintf(out,n,"WAITING FOR GNSS FIX");
 }
+static int has_key(const unsigned long *bits, int code) {
+    const int width = (int)(sizeof(unsigned long) * 8);
+    return (bits[code / width] >> (code % width)) & 1UL;
+}
+
+static int open_keys(void) {
+    char path[64];
+    for (int i = 0; i < 16; i++) {
+        snprintf(path, sizeof(path), "/dev/input/event%d", i);
+        int fd = open(path, O_RDONLY | O_NONBLOCK);
+        if (fd < 0) continue;
+        unsigned long bits[(KEY_MAX + sizeof(unsigned long) * 8) /
+                           (sizeof(unsigned long) * 8)];
+        memset(bits, 0, sizeof(bits));
+        if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(bits)), bits) >= 0 &&
+            has_key(bits, KEY_UP) && has_key(bits, KEY_DOWN) &&
+            has_key(bits, KEY_ENTER))
+            return fd;
+        close(fd);
+    }
+    return -1;
+}
+
+static void set_backlight(int on) {
+    DIR *d = opendir("/sys/class/backlight");
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.') continue;
+        char path[256];
+        snprintf(path, sizeof(path), "/sys/class/backlight/%s/bl_power", e->d_name);
+        FILE *f = fopen(path, "w");
+        if (f) { fprintf(f, "%d\n", on ? 0 : 4); fclose(f); }
+    }
+    closedir(d);
+}
+
+static void draw_status(struct screen *s, int page, const char *ip,
+                        const char *fix, const char *utc,
+                        const char *ntp, const char *ref) {
+    uint32_t bg=rgb(7,18,32,&s->var), panel=rgb(15,39,59,&s->var);
+    uint32_t white=rgb(238,245,250,&s->var), accent=rgb(20,190,170,&s->var);
+    uint32_t muted=rgb(140,170,190,&s->var);
+    char line[80], utc_short[24];
+    time_t now=time(NULL); struct tm tmv; localtime_r(&now,&tmv);
+    snprintf(utc_short,sizeof(utc_short),"%.19s",utc);
+    rect(s,0,0,s->var.xres,s->var.yres,bg);
+    rect(s,0,0,s->var.xres,42,panel);
+    text(s,12,12,"YSPEED GNSS NTP",2,accent);
+    if (page == 0) {
+        text(s,12,52,"LOCAL SYSTEM TIME",1,muted);
+        strftime(line,sizeof(line),"%H:%M:%S",&tmv); text(s,12,70,line,3,white);
+        strftime(line,sizeof(line),"%Y-%m-%d",&tmv); text(s,12,104,line,2,white);
+        rect(s,10,137,s->var.xres-20,2,accent);
+        text(s,12,147,"ETHERNET",1,muted); text(s,12,163,ip,1,white);
+        text(s,12,185,"GNSS FIX",1,muted); text(s,12,201,fix,2,white);
+        text(s,12,228,"RECEIVER UTC",1,muted); text(s,12,244,utc_short,1,white);
+        text(s,12,267,"CHRONY",1,accent); text(s,12,283,ntp,1,white);
+        text(s,12,300,ref,1,muted);
+    } else if (page == 1) {
+        text(s,12,56,"GNSS STATUS",2,accent);
+        text(s,12,94,"FIX MODE",1,muted); text(s,12,112,fix,2,white);
+        text(s,12,154,"RECEIVER UTC",1,muted); text(s,12,172,utc_short,1,white);
+        text(s,12,214,"SATELLITE FIX REQUIRES",1,muted);
+        text(s,12,232,"A CONNECTED ANTENNA",1,muted);
+        text(s,12,286,"UP/DOWN: PAGES",1,accent);
+        text(s,12,302,"ENTER: SELECT",1,accent);
+    } else {
+        text(s,12,56,"NETWORK AND TIME",2,accent);
+        text(s,12,94,"ETHERNET ADDRESS",1,muted); text(s,12,112,ip,1,white);
+        text(s,12,154,"CHRONY STATE",1,muted); text(s,12,172,ntp,2,white);
+        text(s,12,214,"REFERENCE",1,muted); text(s,12,232,ref,1,white);
+        text(s,12,276,"LOCAL NTP SERVICE",1,accent);
+        text(s,12,294,"UDP PORT 123",1,white);
+    }
+}
+
+static void draw_setup(struct screen *s, int selected, int backlight, int rotation) {
+    uint32_t bg=rgb(7,18,32,&s->var), panel=rgb(15,39,59,&s->var);
+    uint32_t white=rgb(238,245,250,&s->var), accent=rgb(20,190,170,&s->var);
+    uint32_t muted=rgb(140,170,190,&s->var);
+    char line[64];
+    rect(s,0,0,s->var.xres,s->var.yres,bg);
+    rect(s,0,0,s->var.xres,42,panel);
+    text(s,12,12,"DEVICE SETUP",2,accent);
+    text(s,12,62,"LANGUAGE: ENGLISH",1,white);
+    text(s,12,86,"LANGUAGE IS FIXED",1,muted);
+    snprintf(line,sizeof(line),"BACKLIGHT: %s",backlight ? "ON" : "OFF");
+    text(s,12,132,selected==0 ? "-" : " ",1,accent);
+    text(s,28,132,line,1,selected==0 ? white : muted);
+    snprintf(line,sizeof(line),"ROTATION: %d",rotation);
+    text(s,12,166,selected==1 ? "-" : " ",1,accent);
+    text(s,28,166,line,1,selected==1 ? white : muted);
+    text(s,12,200,selected==2 ? "-" : " ",1,accent);
+    text(s,28,200,"EXIT SETUP",1,selected==2 ? white : muted);
+    text(s,12,274,"TOP/BOTTOM: MOVE",1,accent);
+    text(s,12,292,"MIDDLE: SELECT",1,accent);
+    text(s,12,310,"HOLD BOTTOM: EXIT",1,muted);
+}
+
 int main(void) {
     struct screen s={.fd=-1};
     s.fd=open("/dev/fb0",O_RDWR);
@@ -180,29 +284,61 @@ int main(void) {
     s.len=s.fix.smem_len;
     s.mem=mmap(NULL,s.len,PROT_READ|PROT_WRITE,MAP_SHARED,s.fd,0);
     if(s.mem==MAP_FAILED){perror("mmap");return 1;}
-    uint32_t bg=rgb(7,18,32,&s.var), panel=rgb(15,39,59,&s.var), white=rgb(238,245,250,&s.var), accent=rgb(20,190,170,&s.var), muted=rgb(140,170,190,&s.var);
+
+    int keyfd=open_keys(), page=0, setup=0, selected=0, backlight=1, rotation=0;
+    int bottom_down=0;
+    struct timespec bottom_start={0};
+    time_t refresh_at=0;
+    char ip[64]="NO ADDRESS",fix[32]="NO TELEMETRY",utc[64]="UNAVAILABLE";
+    char ntp[32]="UNAVAILABLE",ref[32]="NONE";
+    if(keyfd<0) fprintf(stderr,"gpio-keys evdev device not found; display remains available without button navigation\n");
+
     for(;;) {
-        char ip[64],fix[20],utc[64],ntp[32],ref[32],line[64],utc_short[24];
-        time_t now=time(NULL); struct tm tmv; localtime_r(&now,&tmv);
-        get_shared_status(fix,sizeof(fix),utc,sizeof(utc),ntp,sizeof(ntp),ref,sizeof(ref),ip,sizeof(ip));
-        snprintf(utc_short,sizeof(utc_short),"%.19s",utc);
-        rect(&s,0,0,s.var.xres,s.var.yres,bg);
-        rect(&s,0,0,s.var.xres,42,panel);
-        text(&s,12,12,"YSPEED GNSS NTP",2,accent);
-        text(&s,12,52,"LOCAL SYSTEM TIME",1,muted);
-        strftime(line,sizeof(line),"%H:%M:%S",&tmv); text(&s,12,70,line,3,white);
-        strftime(line,sizeof(line),"%Y-%m-%d",&tmv); text(&s,12,104,line,2,white);
-        rect(&s,10,137,s.var.xres-20,2,accent);
-        text(&s,12,147,"ETHERNET",1,muted);
-        text(&s,12,163,ip,1,white);
-        text(&s,12,185,"GNSS FIX",1,muted);
-        text(&s,12,201,fix,2,white);
-        text(&s,12,228,"RECEIVER UTC",1,muted);
-        text(&s,12,244,utc_short,1,white);
-        text(&s,12,267,"CHRONY",1,accent);
-        text(&s,12,283,ntp,1,white);
-        text(&s,12,300,ref,1,muted);
-        usleep(2000000);
+        if(keyfd<0) keyfd=open_keys();
+        if(keyfd>=0) {
+            struct pollfd pfd={.fd=keyfd,.events=POLLIN};
+            if(poll(&pfd,1,100)>0 && (pfd.revents&POLLIN)) {
+                struct input_event ev;
+                while(read(keyfd,&ev,sizeof(ev))==(ssize_t)sizeof(ev)) {
+                    if(ev.type!=EV_KEY) continue;
+                    if(ev.code==KEY_DOWN && ev.value==1) {
+                        bottom_down=1; clock_gettime(CLOCK_MONOTONIC,&bottom_start);
+                    } else if(ev.code==KEY_DOWN && ev.value==0 && bottom_down) {
+                        struct timespec now; clock_gettime(CLOCK_MONOTONIC,&now);
+                        long ms=(now.tv_sec-bottom_start.tv_sec)*1000L+
+                                (now.tv_nsec-bottom_start.tv_nsec)/1000000L;
+                        bottom_down=0;
+                        if(ms>=1000) setup=!setup;
+                        else if(setup) selected=(selected+1)%3;
+                        else page=(page+1)%3;
+                    } else if(ev.code==KEY_UP && ev.value==0) {
+                        if(setup) selected=(selected+2)%3;
+                        else page=(page+2)%3;
+                    } else if(ev.code==KEY_ENTER && ev.value==0 && setup) {
+                        if(selected==0) { backlight=!backlight; set_backlight(backlight); }
+                        else if(selected==1) {
+                            rotation=rotation ? 0 : 180;
+                            s.var.rotate=rotation;
+                            if(ioctl(s.fd,FBIOPUT_VSCREENINFO,&s.var)==0) {
+                                ioctl(s.fd,FBIOGET_VSCREENINFO,&s.var);
+                                ioctl(s.fd,FBIOGET_FSCREENINFO,&s.fix);
+                            }
+                        } else setup=0;
+                    } else if(ev.code==KEY_ENTER && ev.value==0) {
+                        page=(page+1)%3;
+                    }
+                }
+            }
+        } else usleep(100000);
+
+        time_t now=time(NULL);
+        if(now>=refresh_at) {
+            get_shared_status(fix,sizeof(fix),utc,sizeof(utc),ntp,sizeof(ntp),ref,sizeof(ref),ip,sizeof(ip));
+            refresh_at=now+2;
+        }
+        if(setup) draw_setup(&s,selected,backlight,rotation);
+        else draw_status(&s,page,ip,fix,utc,ntp,ref);
+        usleep(100000);
     }
     return 0;
 }

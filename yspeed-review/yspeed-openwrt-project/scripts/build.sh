@@ -150,15 +150,35 @@ ST7789_SOURCE="$(find "$SRC/build_dir/target-mipsel_24kc_musl/linux-ramips_mt76x
   echo "ST7789V kernel source not found after target/linux/prepare" >&2
   exit 4
 }
-grep -qxF '#define HSD20_IPS 1' "$ST7789_SOURCE" || {
-  echo "Unexpected upstream ST7789V source; refusing unreviewed edit" >&2
-  exit 4
-}
-sed -i 's/^#define HSD20_IPS 1$/#define HSD20_IPS 0/' "$ST7789_SOURCE"
-grep -qxF '#define HSD20_IPS 0' "$ST7789_SOURCE" || {
-  echo "Failed to select generic ST7789V initialization profile" >&2
-  exit 4
-}
+# Apply a small, explicit panel-init correction to the upstream driver:
+# - avoid the HSD20-specific power/gamma profile (the YSPEED panel is not
+#   identified as HSD20 IPS);
+# - use the generic ST7789V gamma table;
+# - issue software reset and allow the controller's reset cycle to complete
+#   before Sleep Out. The physical reset GPIO is still asserted by FBTFT.
+python3 - "$ST7789_SOURCE" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+required = [
+    "#define HSD20_IPS 1",
+    ".gamma = HSD20_IPS_GAMMA,",
+    "\tpar->fbtftops.reset(par);\n\n\trc = init_tearing_effect_line(par);",
+]
+for item in required:
+    if item not in s:
+        raise SystemExit("Unexpected ST7789V source; missing patch anchor: " + repr(item))
+s = s.replace("#define HSD20_IPS 1", "#define HSD20_IPS 0", 1)
+s = s.replace(".gamma = HSD20_IPS_GAMMA,", ".gamma = DEFAULT_GAMMA,", 1)
+s = s.replace(
+    "\tpar->fbtftops.reset(par);\n\n\trc = init_tearing_effect_line(par);",
+    "\tpar->fbtftops.reset(par);\n\twrite_reg(par, MIPI_DCS_SOFT_RESET);\n\tmdelay(150);\n\n\trc = init_tearing_effect_line(par);",
+    1,
+)
+p.write_text(s)
+if "#define HSD20_IPS 0" not in s or ".gamma = DEFAULT_GAMMA," not in s or "MIPI_DCS_SOFT_RESET" not in s:
+    raise SystemExit("ST7789V panel-init patch did not apply completely")
+PY
 
 # Hard guard: this project must not produce a flash/sysupgrade/factory image.
 if ! grep -q '^CONFIG_TARGET_ROOTFS_INITRAMFS=y$' "$SRC/.config"; then
@@ -173,6 +193,10 @@ for package in kmod-fb-tft-yspeed kmod-fb-tft-st7789v-yspeed yspeed-display kmod
     exit 4
   fi
 done
+if grep -q '^CONFIG_PACKAGE_kmod-gpio-button-hotplug=y$' "$SRC/.config"; then
+  echo "Conflicting vendor gpio-button-hotplug module selected; use gpio-keys + evdev only" >&2
+  exit 4
+fi
 if grep -Eq '^CONFIG_PACKAGE_(wpad[^=]*|iw|kmod-mt7603(e)?|kmod-mac80211|kmod-mt76-core|wireless-regdb)=(y|m)$' "$SRC/.config"; then
   echo "Wireless package selected in wired-only build config" >&2
   grep -E '^CONFIG_PACKAGE_(wpad[^=]*|iw|kmod-mt7603(e)?|kmod-mac80211|kmod-mt76-core|wireless-regdb)=(y|m)$' "$SRC/.config" >&2 || true
@@ -198,6 +222,16 @@ mkdir -p "$WORKDIR/artifacts"
 for token in 'YSPEED YS-GPS-12832' 'pps-gpio' 'dallas,ds1307' 'denx,uimage' 'yspeed,ys-gps-12832' 'mac-address@2e' 'sitronix,st7789v' 'display@1' 'pinctrl-0' 'LCD Up' 'LCD Enter' 'LCD Down'; do
   grep -qF "$token" "$WORKDIR/artifacts/yspeed-compiled.dts" || { echo "DTB check missing: $token" >&2; exit 7; }
 done
+# The ribbon-connected panel is the ST7789V only. The old vendor SH1106
+# I2C node was stale and must not return to the compiled board description.
+if grep -qF 'wealth,sh1106' "$WORKDIR/artifacts/yspeed-compiled.dts"; then
+  echo "Unexpected legacy SH1106 node in compiled YSPEED DTB" >&2
+  exit 7
+fi
+if ! grep -q 'spi-max-frequency = <0x2625a00>' "$WORKDIR/artifacts/yspeed-compiled.dts"; then
+  echo "Compiled ST7789 node is missing the vendor-confirmed 40 MHz SPI clock" >&2
+  exit 7
+fi
 
 cp "$IMAGE" "$WORKDIR/artifacts/yspeed-ramboot.uImage"
 python3 "$PROJECT_DIR/scripts/validate-uimage.py" "$WORKDIR/artifacts/yspeed-ramboot.uImage" \

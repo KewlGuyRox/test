@@ -15,8 +15,9 @@ define Device/yspeed_ys-gps-12832
   DEVICE_VENDOR := YSPEED
   DEVICE_MODEL := YS-GPS-12832
   DEVICE_DTS := mt7628an_yspeed_ys-gps-12832
-  DEVICE_PACKAGES := gpsd chrony kmod-pps-gpio kmod-gpio-button-hotplug kmod-i2c-mt7628 kmod-rtc-ds1307 kmod-usb2 kmod-usb-ohci \
-                     kmod-fb-tft-yspeed kmod-fb-tft-st7789v-yspeed yspeed-display dropbear uhttpd \
+  DEVICE_PACKAGES := gpsd chrony kmod-pps-gpio kmod-i2c-mt7628 kmod-rtc-ds1307 kmod-usb2 kmod-usb-ohci \
+                     kmod-fb-tft-yspeed kmod-fb-tft-st7789v-yspeed yspeed-display \
+                     kmod-input-gpio-keys kmod-input-evdev dropbear uhttpd \
                      luci-light luci-mod-network luci-mod-status luci-mod-system \
                      luci-ssl luci-theme-bootstrap
   SUPPORTED_DEVICES += yspeed,ys-gps-12832
