@@ -2,6 +2,12 @@ name: YSPEED OpenWrt RAM-boot build
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/yspeed-ramboot-build.yml'
+      - 'yspeed-review/yspeed-openwrt-project/**'
   push:
     branches:
       - yspeed/ramboot-network-and-build-fixes
