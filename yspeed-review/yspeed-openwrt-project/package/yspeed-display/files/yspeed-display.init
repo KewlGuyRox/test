@@ -4,11 +4,7 @@ STOP=10
 USE_PROCD=1
 
 start_service() {
-	[ -e /dev/fb0 ] || return 0
-	# FBTFT registers the LED GPIO backlight initially powered off.
-	for power in /sys/class/backlight/*/bl_power; do
-		[ -e "$power" ] && echo 0 > "$power" 2>/dev/null || true
-	done
+	[ -c /dev/spidev0.1 ] || return 0
 	procd_open_instance
 	procd_set_param command /usr/sbin/yspeed-display
 	procd_set_param respawn 3600 5 5
