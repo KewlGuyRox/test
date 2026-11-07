@@ -1,5 +1,12 @@
 #!/bin/sh
 # Read-only YS-GPS-12832 telemetry snapshot. Shared by web UI and diagnostics.
+#
+# The satellites array is what the LCD mirrors: per-PRN signal strength and
+# constellation, so the panel can draw the same bars the web page does.
+#
+# quality is defined as the mean SNR of satellites actually used for the fix,
+# normalised to 50 dB-Hz (i.e. 30 dB-Hz average -> 60%). It is a presentation
+# number, not a measurement of time accuracy.
 set -u
 get_json() {
     jsonfilter -s "$1" -e "@.$2" 2>/dev/null | head -n 1
@@ -40,7 +47,73 @@ case "$mode" in
 esac
 utc_reported=false
 [ -n "$utc" ] && [ "$utc" != "n/a" ] && utc_reported=true
-sat_count="$(printf '%s\n' "$sky" | jsonfilter -e '@.satellites[*].PRN' 2>/dev/null | wc -l | tr -d ' ')"
+
+# --- per-satellite detail -------------------------------------------------
+prns="$(printf '%s\n' "$sky" | jsonfilter -e '@.satellites[*].PRN' 2>/dev/null || true)"
+ss="$(printf '%s\n' "$sky" | jsonfilter -e '@.satellites[*].ss' 2>/dev/null || true)"
+used="$(printf '%s\n' "$sky" | jsonfilter -e '@.satellites[*].used' 2>/dev/null || true)"
+gnss="$(printf '%s\n' "$sky" | jsonfilter -e '@.satellites[*].gnssid' 2>/dev/null || true)"
+
+sat_json="[]"
+quality=0
+used_count=0
+visible_count=0
+if [ -n "$prns" ]; then
+    tmpd="$(mktemp -d 2>/dev/null || echo /tmp)"
+    {
+        printf '%s\n' "$prns"
+        printf '^\n'
+        printf '%s\n' "$ss"
+        printf '^\n'
+        printf '%s\n' "$used"
+        printf '^\n'
+        printf '%s\n' "$gnss"
+    } | awk -v qfile="$tmpd/quality" '
+        function num(v) { return (v ~ /^-?[0-9.]+$/) ? v + 0 : 0 }
+        { if ($0 == "^") { section++; next } }
+        section == 0 { prn[++np] = num($0); next }
+        section == 1 { ss[++ns] = num($0); next }
+        section == 2 { u[++nu] = ($0 ~ /true/) ? 1 : 0; next }
+        section == 3 { g[++ng] = num($0); next }
+        END {
+            n = np
+            count = 0
+            sum = 0
+            usedn = 0
+            for (i = 1; i <= n; i++) {
+                if (ss[i] > 0) count++
+                if (u[i] == 1) { usedn++; sum += ss[i] }
+            }
+            q = (usedn > 0) ? int((sum / usedn) / 50 * 100) : 0
+            if (q > 100) q = 100
+            if (q < 0) q = 0
+            printf "%d %d %d\n", q, usedn, count > qfile
+            ORS = ""
+            printf "["
+            for (i = 1; i <= n; i++) {
+                if (i > 1) printf ","
+                printf "{\"prn\":%d,\"gnss\":%d,\"snr\":%d,\"used\":%s}", \
+                    prn[i], g[i], ss[i], (u[i] == 1 ? "true" : "false")
+            }
+            printf "]"
+            ORS = "\n"
+        }' > "$tmpd/sats"
+    sat_json="$(cat "$tmpd/sats" 2>/dev/null || echo '[]')"
+    # Fail safe: anything that is not an array must not corrupt the document.
+    case "$sat_json" in
+        \[*\]) ;;
+        *) sat_json="[]" ;;
+    esac
+    if [ -r "$tmpd/quality" ]; then
+        read -r quality used_count visible_count < "$tmpd/quality" || true
+    fi
+    rm -rf "$tmpd" 2>/dev/null || true
+fi
+# Numeric guards: the web page and the LCD both parse these unquoted.
+case "${quality:-0}" in ''|*[!0-9]*) quality=0 ;; esac
+case "${used_count:-0}" in ''|*[!0-9]*) used_count=0 ;; esac
+case "${visible_count:-0}" in ''|*[!0-9]*) visible_count=0 ;; esac
+
 chrony="$(chronyc tracking 2>/dev/null || true)"
 sources="$(chronyc sources -v 2>/dev/null || true)"
 leap="$(printf '%s\n' "$chrony" | sed -n 's/^Leap status:[[:space:]]*//p' | head -n1)"
@@ -74,7 +147,10 @@ printf ',"course_deg":'; json_number "$track"
 printf ',"hdop":'; json_number "$hdop"
 printf ',"vdop":'; json_number "$vdop"
 printf ',"pdop":'; json_number "$pdop"
-printf ',"satellites_reported":'; json_number "$sat_count"
+printf ',"satellites_reported":'; json_number "$visible_count"
+printf ',"satellites_used":%d' "${used_count:-0}"
+printf ',"quality":%d' "${quality:-0}"
+printf ',"satellites":%s' "$sat_json"
 printf '}'
 printf ',"ntp":{"state":"%s","reference":' "$ntp_state"; json_string "$refid"
 printf ',"stratum":'; json_number "$stratum"
