@@ -88,7 +88,9 @@ def find_lzma_newc(raw):
 
     Linux 6.12's initramfs build uses 'lzma -9'. The stream has the standard
     13-byte LZMA-alone header (properties, dictionary size, uncompressed size).
-    Candidate headers are screened before attempting decompression.
+    Candidate headers are screened before attempting decompression. Do not cap
+    the number of candidates: executable kernel data can contain hundreds of
+    byte sequences that resemble LZMA headers before the actual initramfs stream.
     """
     attempts = 0
     for offset in range(max(0, len(raw) - 12)):
@@ -118,8 +120,6 @@ def find_lzma_newc(raw):
                     return result
         except (lzma.LZMAError, EOFError, MemoryError):
             pass
-        if attempts >= 256:
-            break
     return None
 
 
