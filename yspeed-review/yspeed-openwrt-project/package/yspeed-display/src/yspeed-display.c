@@ -53,6 +53,10 @@
 #define STATUS_JSON_MAX 8192
 
 static volatile sig_atomic_t g_running = 1;
+
+/* Diagnostics for the last GPIO chip resolution, reported by --selftest. */
+static char g_gpio_chip_label[128];
+static const char *g_gpio_chip_rule = "none";
 static int g_sat_count;
 static int g_sat_offset;
 
@@ -168,7 +172,12 @@ static int gpio_chip_base_for(int offset)
 {
 	DIR *dir = opendir("/sys/class/gpio");
 	struct dirent *entry;
-	int best = -1;
+	int matched = -1;   /* base of a chip whose label names the SoC block */
+	int fallback = -1;  /* base of the first chip wide enough, if unambiguous */
+	int candidates = 0;
+
+	g_gpio_chip_label[0] = '\0';
+	g_gpio_chip_rule = "none";
 
 	if (!dir)
 		return -1;
@@ -202,15 +211,39 @@ static int gpio_chip_base_for(int offset)
 		if (base < 0 || ngpio <= offset)
 			continue;
 
+		candidates++;
+		if (fallback < 0) {
+			fallback = base;
+			snprintf(g_gpio_chip_label, sizeof(g_gpio_chip_label), "%s", label);
+		}
 		if (strstr(label, "10000600") || strstr(label, "mt7628") ||
 		    strstr(label, "mt7621")) {
-			best = base;
+			matched = base;
+			snprintf(g_gpio_chip_label, sizeof(g_gpio_chip_label), "%s", label);
+			g_gpio_chip_rule = "label match";
 			break;
 		}
 	}
 
 	closedir(dir);
-	return best;
+
+	if (matched >= 0)
+		return matched;
+
+	/*
+	 * No label matched. Accept the single chip that covers the offset, but only
+	 * when there is exactly one candidate: guessing between several chips would
+	 * export another controller's lines, which is worse than failing.
+	 */
+	if (candidates == 1) {
+		g_gpio_chip_rule = "sole candidate";
+		return fallback;
+	}
+	if (candidates > 1)
+		g_gpio_chip_rule = "ambiguous, refusing";
+	else
+		g_gpio_chip_rule = "no candidate";
+	return -1;
 }
 
 static int gpio_claim(int offset, int *number, int initial)
@@ -818,13 +851,14 @@ static int selftest(void)
 		int base = gpio_chip_base_for(pins[i].offset);
 
 		if (base < 0) {
-			printf("%-12s: offset %d -> NOT RESOLVABLE\n",
-			       pins[i].name, pins[i].offset);
+			printf("%-12s: offset %d -> NOT RESOLVABLE (%s)\n",
+			       pins[i].name, pins[i].offset, g_gpio_chip_rule);
 			ok = 0;
 		} else {
-			printf("%-12s: offset %d -> sysfs gpio%d\n",
+			printf("%-12s: offset %d -> sysfs gpio%d  [chip label '%s', %s]\n",
 			       pins[i].name, pins[i].offset,
-			       base + pins[i].offset);
+			       base + pins[i].offset,
+			       g_gpio_chip_label, g_gpio_chip_rule);
 		}
 	}
 
