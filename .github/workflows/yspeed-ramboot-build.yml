@@ -27,6 +27,16 @@ jobs:
       - name: Check out project
         uses: actions/checkout@v4
 
+      - name: Cancel superseded builds for this source branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stale_runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" --jq ".workflow_runs[] | select(.head_branch == \"${GITHUB_REF_NAME}\" and .id != ${GITHUB_RUN_ID} and .status != \"completed\") | .id")"
+          for run_id in $stale_runs; do
+            echo "Cancelling superseded workflow run $run_id"
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id/cancel" || true
+          done
+
       - name: Install OpenWrt build prerequisites
         run: |
           sudo apt-get update
