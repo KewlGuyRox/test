@@ -22,7 +22,7 @@ permissions:
 # Keep only the newest build for this branch. A newer commit supersedes
 # any in-flight or queued build of an older source revision.
 concurrency:
-  group: yspeed-openwrt-ramboot-${{ github.ref }}
+  group: yspeed-openwrt-ramboot-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
