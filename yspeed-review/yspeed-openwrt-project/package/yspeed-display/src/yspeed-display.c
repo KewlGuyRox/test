@@ -318,16 +318,18 @@ static int lcd_cmd(struct display *d, uint8_t cmd, const uint8_t *data, size_t l
 	return spi_write_all(d->spi, data, len);
 }
 
-/* ST7789 MADCTL for each rotation, with the BGR bit set as the vendor panel. */
+/* ST7789 MADCTL mapping follows the Linux ST7789V driver:
+ * 0=0 degrees, 1=90, 2=180, 3=270. BGR matches the vendor panel.
+ */
 static uint8_t madctl_for(int rotation)
 {
 	switch (rotation & 3) {
 	case 1:
-		return 0x68; /* MX | MV | BGR */
+		return 0xA8; /* MY | MV | BGR */
 	case 2:
 		return 0xC8; /* MX | MY | BGR */
 	case 3:
-		return 0xA8; /* MY | MV | BGR */
+		return 0x68; /* MX | MV | BGR */
 	default:
 		return 0x08; /* BGR */
 	}
@@ -335,58 +337,64 @@ static uint8_t madctl_for(int rotation)
 
 static int panel_init(struct display *d, const struct config *cfg)
 {
-	static const uint8_t porch[] = { 0x0c, 0x0c, 0x00, 0x33, 0x33 };
-	static const uint8_t gate[] = { 0x35 };
-	static const uint8_t vcoms[] = { 0x19 };
-	static const uint8_t lcm[] = { 0x2c };
-	static const uint8_t vdvvrhen[] = { 0x01 };
-	static const uint8_t vrhs[] = { 0x12 };
+	/*
+	 * Use the upstream Linux ST7789V HSD20 IPS power/gamma profile.
+	 * The previous hand-written values were for a different ST7789
+	 * electrical profile (notably GCTRL/VCOM/PORCTRL), which can leave
+	 * this panel illuminated but with no visible pixels.
+	 */
+	static const uint8_t porch[] = { 0x05, 0x05, 0x00, 0x33, 0x33 };
+	static const uint8_t gate[] = { 0x75 };
+	static const uint8_t vdvvrhen[] = { 0x01, 0xff };
+	static const uint8_t vrhs[] = { 0x13 };
 	static const uint8_t vdvs[] = { 0x20 };
-	static const uint8_t frctrl[] = { 0x0f };
+	static const uint8_t vcoms[] = { 0x22 };
+	static const uint8_t vcom_offset[] = { 0x20 };
 	static const uint8_t pwctrl[] = { 0xa4, 0xa1 };
-	static const uint8_t gammap[] = { 0xd0, 0x04, 0x0d, 0x11, 0x13, 0x2b,
-					  0x3f, 0x54, 0x4c, 0x18, 0x0d, 0x0b,
-					  0x1f, 0x23 };
-	static const uint8_t gaman[] = { 0xd0, 0x04, 0x0c, 0x11, 0x13, 0x2c,
-					 0x3f, 0x44, 0x51, 0x2f, 0x1f, 0x1f,
-					 0x20, 0x23 };
+	static const uint8_t gamma_pos[] = {
+		0xd0, 0x05, 0x0a, 0x09, 0x08, 0x05, 0x2e,
+		0x44, 0x45, 0x0f, 0x17, 0x16, 0x2b, 0x33
+	};
+	static const uint8_t gamma_neg[] = {
+		0xd0, 0x05, 0x0a, 0x09, 0x08, 0x05, 0x2e,
+		0x44, 0x45, 0x0f, 0x17, 0x16, 0x2b, 0x33
+	};
 	const uint8_t colmod = 0x55;
 	const uint8_t madctl = madctl_for(cfg->rotation);
 
-	gpio_set(d->backlight, 0);
-	gpio_set(d->reset, 0);
-	msleep(30);
-	gpio_set(d->reset, 1);
-	msleep(150);
-
-	if (lcd_cmd(d, 0x01, NULL, 0) < 0)  /* SWRESET */
+	/* Keep the backlight dark until the controller has completed init. */
+	if (gpio_set(d->backlight, 0) < 0 ||
+	    gpio_set(d->reset, 0) < 0)
 		return -1;
-	msleep(150);
-	if (lcd_cmd(d, 0x11, NULL, 0) < 0)  /* SLPOUT */
+	msleep(20);
+	if (gpio_set(d->reset, 1) < 0)
 		return -1;
 	msleep(120);
 
-	if (lcd_cmd(d, 0x3a, &colmod, 1) < 0 ||        /* COLMOD 16bpp */
-	    lcd_cmd(d, 0x36, &madctl, 1) < 0 ||        /* MADCTL rotation */
-	    lcd_cmd(d, 0xb2, porch, sizeof(porch)) < 0 ||   /* PORCTRL */
-	    lcd_cmd(d, 0xb7, gate, sizeof(gate)) < 0 ||     /* GCTRL */
-	    lcd_cmd(d, 0xbb, vcoms, sizeof(vcoms)) < 0 ||   /* VCOMS */
-	    lcd_cmd(d, 0xc0, lcm, sizeof(lcm)) < 0 ||       /* LCMCTRL */
+	/* Hardware reset is authoritative; follow the upstream DCS sequence. */
+	if (lcd_cmd(d, 0x11, NULL, 0) < 0) /* SLPOUT */
+		return -1;
+	msleep(120);
+
+	if (lcd_cmd(d, 0x3a, &colmod, 1) < 0 ||             /* COLMOD RGB565 */
+	    lcd_cmd(d, 0x36, &madctl, 1) < 0 ||             /* MADCTL */
+	    lcd_cmd(d, 0xb2, porch, sizeof(porch)) < 0 ||  /* PORCTRL */
+	    lcd_cmd(d, 0xb7, gate, sizeof(gate)) < 0 ||    /* GCTRL */
 	    lcd_cmd(d, 0xc2, vdvvrhen, sizeof(vdvvrhen)) < 0 ||
-	    lcd_cmd(d, 0xc3, vrhs, sizeof(vrhs)) < 0 ||     /* VRHS */
-	    lcd_cmd(d, 0xc4, vdvs, sizeof(vdvs)) < 0 ||     /* VDVS */
-	    lcd_cmd(d, 0xc6, frctrl, sizeof(frctrl)) < 0 || /* FRCTRL2 */
+	    lcd_cmd(d, 0xc3, vrhs, sizeof(vrhs)) < 0 ||    /* VRHS */
+	    lcd_cmd(d, 0xc4, vdvs, sizeof(vdvs)) < 0 ||    /* VDVS */
+	    lcd_cmd(d, 0xbb, vcoms, sizeof(vcoms)) < 0 ||  /* VCOMS */
+	    lcd_cmd(d, 0xc5, vcom_offset, sizeof(vcom_offset)) < 0 ||
 	    lcd_cmd(d, 0xd0, pwctrl, sizeof(pwctrl)) < 0 || /* PWCTRL1 */
-	    lcd_cmd(d, 0xe0, gammap, sizeof(gammap)) < 0 || /* PVGAMCTRL */
-	    lcd_cmd(d, 0xe1, gaman, sizeof(gaman)) < 0)     /* NVGAMCTRL */
+	    lcd_cmd(d, 0xe0, gamma_pos, sizeof(gamma_pos)) < 0 ||
+	    lcd_cmd(d, 0xe1, gamma_neg, sizeof(gamma_neg)) < 0)
 		return -1;
 
-	if (lcd_cmd(d, 0x21, NULL, 0) < 0 ||  /* INVON */
-	    lcd_cmd(d, 0x13, NULL, 0) < 0 ||  /* NORON */
-	    lcd_cmd(d, 0x29, NULL, 0) < 0)    /* DISPON */
+	if (lcd_cmd(d, 0x29, NULL, 0) < 0 || /* DISPON */
+	    lcd_cmd(d, 0x21, NULL, 0) < 0)   /* INVON (HSD20 IPS profile) */
 		return -1;
 
-	msleep(100);
+	msleep(50);
 	return gpio_set(d->backlight, 1);
 }
 
@@ -681,7 +689,7 @@ static void config_load(struct config *cfg)
 	char line[160];
 	FILE *f;
 
-	cfg->rotation = 3;          /* verified working orientation on this unit */
+	cfg->rotation = 3;          /* vendor UCI default: 270 degrees */
 	cfg->sleep_seconds = 120;   /* vendor default */
 	cfg->english = 1;
 
@@ -787,7 +795,7 @@ static int selftest(void)
 	struct utsname u;
 	int ok = 1;
 
-	printf("== yspeed-display selftest ==\n");
+	printf("== yspeed-display preflight selftest ==\n");\n\tprintf("NOTE: this checks GPIO/SPI/config presence only; it does not prove panel rendering.\n");
 
 	if (uname(&u) == 0)
 		printf("kernel      : %s %s\n", u.sysname, u.release);
