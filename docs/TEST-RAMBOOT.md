@@ -89,7 +89,7 @@ cat /etc/resolv.conf
 ip -4 addr show | grep -c '192.168.88'   # must print 0
 ```
 
-Expected: eth0.2 receives its DHCP address, but **no DHCP-provided default route and no DHCP-provided DNS server** are installed. `ip route` must show no default route learned from this WAN lease, and resolver files must not contain DHCP-learned nameservers. LuCI can change WAN to static addressing when required.
+Expected: `eth0.2` receives the DHCP address and any gateway/DNS options offered by the server. Test both a full lease (address, gateway, DNS) and an address-only lease; do not hard-code gateway/DNS behavior. LuCI must also allow static IP, gateway, and DNS configuration.
 
 Then verify services:
 
@@ -144,7 +144,7 @@ For every attempt, record:
 - Artifact filename, byte size, and validator output.
 - U-Boot `bdinfo`, image header, and calculated memory ranges.
 - Full serial boot log.
-- Runtime IP, routes, resolver contents (confirm no DHCP route/DNS), SSH result.
+- Runtime IP and the route/DNS options actually offered by DHCP (test both full and address-only leases), plus static-IP configuration and SSH result.
 - SPI/GPIO inventory, display test observations, and (with antenna attached) `ppstest /dev/pps0` assertion timestamps plus Chrony PPS source/lock evidence.
 - Chrony listener and client query results.
 
