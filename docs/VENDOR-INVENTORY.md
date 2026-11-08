@@ -150,7 +150,7 @@ uses chrony and must verify that it is the only intended NTP server.
 | Vendor JWT stack | replace with LuCI sessions and rpcd ACLs |
 | Wireless pages/radio | wired-only target; disable radio and omit wireless packages |
 | Vendor `ysgps` backend | do not reuse; replace with maintained OpenWrt services and a shared status producer |
-| Vendor LAN mode/bridge | excluded; one WAN uplink only, using DHCP address-only (no DHCP default route or DNS) or static WAN addressing |
+| Vendor LAN mode/bridge | excluded; `eth0.2` remains the single routed Ethernet interface, with normal DHCP acceptance of address and any offered gateway/DNS, plus static IPv4/gateway/DNS configuration |
 
 ## Replacement feature-parity checklist
 
