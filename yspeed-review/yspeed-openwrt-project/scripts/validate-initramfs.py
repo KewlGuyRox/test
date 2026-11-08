@@ -13,6 +13,7 @@ import gzip
 import lzma
 import struct
 import sys
+import zlib
 
 FDT_MAGIC = bytes([0xd0, 0x0d, 0xfe, 0xed])
 NEWC_MAGIC = b"070701"
@@ -145,7 +146,7 @@ def find_initramfs(raw):
             result = accepted_archive(archive)
             if result:
                 return result[0], result[1], "gzip"
-        except (OSError, EOFError):
+        except (OSError, EOFError, zlib.error):
             pass
         idx += 2
 
