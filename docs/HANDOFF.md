@@ -173,3 +173,43 @@ Never use `saveenv`.
 
 **Safety rule:** no persistent flash writes under any circumstances unless the
 user explicitly changes the project constraint.
+
+---
+
+## Current state (2026-11-07, late)
+
+**Code and docs are momentarily split.** The working code is on branch
+`build/final` (head `3e7fd16`), which is where builds are dispatched from. This
+document and the other `docs/` files are on `yspeed/ramboot-network-and-build-fixes`.
+They have not been merged yet; do not assume this doc describes code that is on
+this branch.
+
+### Verified since the last update
+
+- **spidev was missing from the image.** The kernel resolves `CONFIG_SPI_SPIDEV`
+  to `=m`, so `/dev/spidev0.1` only exists if **`kmod-spi-dev`** is installed.
+  It was not in `DEVICE_PACKAGES`. The package is `kmod-spi-dev`
+  (`KernelPackage/spi-dev`); there is no `kmod-spi-spidev` in 25.12.
+- **The spidev OF match is now a quilt patch**, `patches/999-spidev-yspeed-match.patch`,
+  copied into `target/linux/ramips/patches-6.12/` before `make target/linux/prepare`.
+  `git apply --check` passes against the real v6.12 source. The previous inline
+  Python edit of `spidev.c` is gone.
+- **Native SPI CS1 confirmed correct** from the vendor DTB: `pinctrl-0` claims the
+  `spi cs1` function, `spidev@1` uses `reg = <1>`, there is no `cs-gpios` property,
+  and `spi_gpio` shows 0 users in the captured `/proc/modules`. GPIO6 *is* the
+  CS1 pin; the choice is which function it takes, and the vendor took the
+  controller-driven one.
+- **Compiler cache was never active** until now: the `rules.mk` assignment is
+  indented, ccache is not installed by the workflow, and `CONFIG_CCACHE` must be
+  passed on the make command line. All three are fixed in `build.sh`, which also
+  prints `compiler cache : enabled at ...` in the first minute.
+- **Kernel symbol assertions demoted to warnings** — they previously aborted a
+  build *after* image assembly had completed because `find */linux-*/.config`
+  selected a file that was not the kernel config.
+
+### Still not proven
+
+Nothing about the panel. No build has yet published an artifact from this tree.
+The ordered diagnosis once one exists: `yspeed-display --selftest`, then
+`--test`, then only if CS1 is genuinely suspect, the `gpio` + `cs-gpios`
+experiment described in `BUILD-LOOP.md`.
