@@ -2,11 +2,11 @@
 """Verify that a YSPEED RAM-boot uImage embeds a usable initramfs.
 
 Linux can compress the initramfs cpio archive independently of the outer
-uImage compression. OpenWrt's Linux 6.12 build selects CONFIG_INITRAMFS_COMPRESSION_LZMA
-and runs the LZMA-alone compressor on initramfs_data.cpio. Searching only for
-the literal newc magic in the decompressed kernel therefore produces a false
-"NOT FOUND" result. This gate understands plain, gzip, and LZMA-alone cpio
-archives and checks for the files needed by this appliance.
+uImage compression. OpenWrt's Linux 6.12 build selects
+CONFIG_INITRAMFS_COMPRESSION_LZMA and runs the LZMA-alone compressor on
+initramfs_data.cpio. Searching only for literal newc magic in the decompressed
+kernel therefore produces a false "NOT FOUND" result. This gate understands
+plain, gzip, and LZMA-alone cpio archives and checks essential appliance files.
 """
 import argparse
 import gzip
@@ -14,26 +14,28 @@ import lzma
 import struct
 import sys
 
-FDT_MAGIC = b"\xd0\x0d\xfe\xed"
+FDT_MAGIC = bytes([0xd0, 0x0d, 0xfe, 0xed])
 NEWC_MAGIC = b"070701"
 TRAILER = b"TRAILER!!!"
+NUL = bytes([0])
+GZIP_MAGIC = bytes([0x1f, 0x8b])
 MAX_ARCHIVE = 128 * 1024 * 1024
 MAX_LZMA_DICT = 128 * 1024 * 1024
 
 
 def decompress_uimage(payload, comp):
     """Return the outer uImage payload decompressed, or None."""
-    if comp == 3:  # LZMA
+    if comp == 3:
         try:
             return lzma.decompress(payload, format=lzma.FORMAT_ALONE)
         except lzma.LZMAError:
             return None
-    if comp == 1:  # gzip
+    if comp == 1:
         try:
             return gzip.decompress(payload)
         except OSError:
             return None
-    if comp == 0:  # uncompressed
+    if comp == 0:
         return payload
     return None
 
@@ -55,7 +57,7 @@ def walk_newc(buf, start=0):
         if namesize <= 0 or name_end > len(buf):
             return []
         raw_name = buf[name_start:name_end]
-        if not raw_name.endswith(b"\\0"):
+        if not raw_name.endswith(NUL):
             return []
         name = raw_name[:-1]
         if any(byte < 32 or byte > 126 for byte in name):
@@ -89,7 +91,7 @@ def find_lzma_newc(raw):
     Candidate headers are screened before attempting decompression.
     """
     attempts = 0
-    for offset in range(max(0, len(raw) - 13)):
+    for offset in range(max(0, len(raw) - 12)):
         properties = raw[offset]
         if properties > 224:
             continue
@@ -116,7 +118,7 @@ def find_lzma_newc(raw):
                     return result
         except (lzma.LZMAError, EOFError, MemoryError):
             pass
-        if attempts >= 64:
+        if attempts >= 256:
             break
     return None
 
@@ -135,7 +137,7 @@ def find_initramfs(raw):
 
     idx = 0
     while True:
-        idx = raw.find(b"\\x1f\\x8b", idx)
+        idx = raw.find(GZIP_MAGIC, idx)
         if idx < 0:
             break
         try:
@@ -170,8 +172,8 @@ def main():
     data = open(args.image, "rb").read()
     if len(data) < 64:
         sys.exit("FAIL: image is shorter than a legacy uImage header")
-    magic, hcrc, ts, size, load, entry, dcrc, os_id, arch, itype, comp = \\
-        struct.unpack(">7I4B", data[:32])
+    header = struct.unpack(">7I4B", data[:32])
+    magic, hcrc, ts, size, load, entry, dcrc, os_id, arch, itype, comp = header
 
     print("== initramfs gate ==")
     print("image           : %s" % args.image)
@@ -195,6 +197,8 @@ def main():
         print("initramfs       : NOT FOUND")
         print("hint            : the kernel may contain an independently compressed cpio archive")
         sys.exit("FAIL: no embedded initramfs - this image would not boot")
+    if len(names) < args.min_entries:
+        sys.exit("FAIL: initramfs has only %d entries; minimum is %d" % (len(names), args.min_entries))
 
     archive_mib = archive_bytes / 1048576.0
     print("initramfs       : found, %d entries, codec=%s" % (len(names), archive_codec))
