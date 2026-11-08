@@ -164,16 +164,21 @@ static int read_int_file(const char *path, int *out)
 }
 
 /*
- * Resolve the sysfs base of the GPIO controller that owns a SoC pin offset.
- * Prefers a chip whose label names the MT7628/MT7621 block, but falls back to
- * the first controller wide enough to contain the offset.
+ * Resolve the MT7628 GPIO bank that owns the SoC pin offset.
+ *
+ * Linux 6.12 exposes this controller as several gpiochips. The hardware
+ * snapshot for this board identifies GPIO offsets 0..31 on the
+ * "10000600.gpio-bank2" chip (for example, offset 16 -> global GPIO 592).
+ * Matching only "10000600" is unsafe: another bank has the same parent
+ * address, and readdir() order is not stable. Prefer the exact bank label;
+ * only use a sole-candidate fallback when the kernel exposes no bank label.
  */
 static int gpio_chip_base_for(int offset)
 {
 	DIR *dir = opendir("/sys/class/gpio");
 	struct dirent *entry;
-	int matched = -1;   /* base of a chip whose label names the SoC block */
-	int fallback = -1;  /* base of the first chip wide enough, if unambiguous */
+	int bank2 = -1;
+	int fallback = -1;
 	int candidates = 0;
 
 	g_gpio_chip_label[0] = '\0';
@@ -191,15 +196,12 @@ static int gpio_chip_base_for(int offset)
 
 		if (strncmp(entry->d_name, "gpiochip", 8) != 0)
 			continue;
-
 		snprintf(path, sizeof(path), "/sys/class/gpio/%s/base", entry->d_name);
 		if (read_int_file(path, &base) < 0)
 			continue;
-
 		snprintf(path, sizeof(path), "/sys/class/gpio/%s/ngpio", entry->d_name);
 		if (read_int_file(path, &ngpio) < 0)
 			continue;
-
 		snprintf(path, sizeof(path), "/sys/class/gpio/%s/label", entry->d_name);
 		f = fopen(path, "r");
 		if (f) {
@@ -207,7 +209,6 @@ static int gpio_chip_base_for(int offset)
 				label[0] = '\0';
 			fclose(f);
 		}
-
 		if (base < 0 || ngpio <= offset)
 			continue;
 
@@ -216,33 +217,23 @@ static int gpio_chip_base_for(int offset)
 			fallback = base;
 			snprintf(g_gpio_chip_label, sizeof(g_gpio_chip_label), "%s", label);
 		}
-		if (strstr(label, "10000600") || strstr(label, "mt7628") ||
-		    strstr(label, "mt7621")) {
-			matched = base;
+		if (strstr(label, "10000600.gpio-bank2")) {
+			bank2 = base;
 			snprintf(g_gpio_chip_label, sizeof(g_gpio_chip_label), "%s", label);
-			g_gpio_chip_rule = "label match";
-			break;
+			g_gpio_chip_rule = "exact MT7628 bank2 label";
 		}
 	}
-
 	closedir(dir);
 
-	if (matched >= 0)
-		return matched;
+	if (bank2 >= 0)
+		return bank2;
 
-	/*
-	 * No label matched. Accept the single chip that covers the offset, but only
-	 * when there is exactly one candidate: guessing between several chips would
-	 * export another controller's lines, which is worse than failing.
-	 */
+	/* Never guess between multiple unlabeled/unknown controllers. */
 	if (candidates == 1) {
-		g_gpio_chip_rule = "sole candidate";
+		g_gpio_chip_rule = "sole candidate (label unavailable)";
 		return fallback;
 	}
-	if (candidates > 1)
-		g_gpio_chip_rule = "ambiguous, refusing";
-	else
-		g_gpio_chip_rule = "no candidate";
+	g_gpio_chip_rule = candidates ? "ambiguous, refusing" : "no candidate";
 	return -1;
 }
 
@@ -872,9 +863,24 @@ static int selftest(void)
 
 	if (access(CONFIG_PATH, F_OK) == 0)
 		printf("config      : %s present\n", CONFIG_PATH);
-	else
-		printf("config      : %s absent (defaults: rotation 3, sleep 120)\n",
+	else {
+		printf("config      : %s MISSING (UCI first-boot defaults not applied)\n",
 		       CONFIG_PATH);
+		ok = 0;
+	}
+	{
+		FILE *status = popen(STATUS_BIN " 2>/dev/null", "r");
+		char sample[201] = "";
+		if (status) {
+			if (fgets(sample, sizeof(sample), status))
+				printf("status JSON : %.160s\n", sample);
+			else
+				printf("status JSON : EMPTY (status command produced no output)\n");
+			pclose(status);
+		} else {
+			printf("status JSON : unable to execute %s\n", STATUS_BIN);
+		}
+	}
 
 	if (!ok) {
 		printf("result      : FAILED before touching the panel\n");

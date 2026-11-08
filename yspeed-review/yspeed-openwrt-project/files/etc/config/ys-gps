@@ -1,0 +1,4 @@
+config display 'lcd'
+        option rotation '3'
+        option backlight_sleep_time '120'
+        option language 'english'

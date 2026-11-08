@@ -77,6 +77,10 @@ done
  ./scripts/feeds install -p luci luci-light luci-mod-network luci-mod-status luci-mod-system luci-ssl luci-theme-bootstrap)
 cp "$PROJECT_DIR/config/ramips-mt76x8-yspeed.config" "$SRC/.config"
 cp -a "$PROJECT_DIR/files/." "$SRC/files/"
+# The LCD runtime config is seeded from this UCI profile on first boot.
+[[ -f "$PROJECT_DIR/files/etc/config/ys-gps" ]] || { echo "Missing ys-gps UCI config" >&2; exit 6; }
+[[ -x "$PROJECT_DIR/files/etc/uci-defaults/93-yspeed-display-config" ]] || { echo "Missing executable LCD config initializer" >&2; exit 6; }
+grep -q "config display 'lcd'" "$PROJECT_DIR/files/etc/config/ys-gps" || { echo "LCD UCI section missing" >&2; exit 6; }
 for dir in "$SRC/files/etc/uci-defaults" "$SRC/files/etc/hotplug.d/iface" "$SRC/files/usr/sbin" "$SRC/files/www/cgi-bin"; do
   [ ! -d "$dir" ] || find "$dir" -type f -exec chmod 0755 {} + 2>/dev/null || true
 done

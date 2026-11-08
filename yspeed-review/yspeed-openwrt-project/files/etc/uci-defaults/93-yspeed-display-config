@@ -1,0 +1,16 @@
+#!/bin/sh
+# Seed the userspace ST7789 renderer config from UCI exactly once.
+# The front-panel settings menu subsequently owns the runtime config file.
+[ -e /etc/lvgl_st7789.conf ] && exit 0
+. /lib/functions.sh
+config_load ys-gps
+config_get rotation lcd rotation '3'
+config_get sleep lcd backlight_sleep_time '120'
+config_get language lcd language 'english'
+case "$rotation" in 0|1|2|3) ;; *) rotation=3 ;; esac
+case "$sleep" in ''|*[!0-9]*) sleep=120 ;; esac
+case "$language" in english) ;; *) language=english ;; esac
+umask 022
+printf 'rotation=%s\nbacklight_sleep_time=%s\nlanguage=%s\n' \
+        "$rotation" "$sleep" "$language" > /etc/lvgl_st7789.conf
+exit 0
