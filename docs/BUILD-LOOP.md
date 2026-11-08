@@ -200,3 +200,56 @@ compiled defaults.
 
 `build.sh` re-runs `scripts/feeds update packages luci` on every build. That is
 minutes per run and has no bearing on correctness.
+
+## Chip select: native SPI CS1 is correct — evidence, not preference
+
+A review has proposed routing the LCD chip select through GPIO6 with
+`cs-gpios = <0>, <&gpio 6 GPIO_ACTIVE_LOW>` instead of the SPI controller's
+native CS1. The vendor device tree rules that out. From the captured
+`yspeed-original.dtb`:
+
+```
+spi@b00 {
+        compatible = "ralink,mt7621-spi";
+        pinctrl-names = "default";
+        pinctrl-0 = <&spi_pins>, <&spi_cs1_pins>;   /* claims the CS1 FUNCTION */
+        status = "okay";
+        spidev@1 {
+                compatible = "linux,spidev";
+                reg = <1>;                          /* reg=1 means hardware CS1 */
+                spi-max-frequency = <0x2625a00>;    /* 40 MHz */
+        };
+};
+```
+
+- There is **no `cs-gpios` property anywhere** in the vendor tree.
+- The `spi_cs1` pinmux group exists (`groups = "spi cs1"; function = "spi cs1"`)
+  and is referenced by `pinctrl-0`, so the controller drives the line.
+- `/proc/modules` in the capture shows `spi_gpio` with **0 users**, i.e. no
+  software chip select was in play.
+
+GPIO6 **is** the SPI_CS1 pin. The choice is which function the pin takes:
+"spi cs1" (controller drives it) or "gpio" (software toggles it). Those are
+mutually exclusive; adding `cs-gpios` alongside the `spi_cs1` pinmux would have
+two owners for one pin. The vendor selected the native function, and this project
+matches it: `pinctrl-0 = <&spi_pins>, <&spi_cs1_pins>` plus `/dev/spidev0.1`.
+
+### On "build #80 succeeded on yspeed/blocker-resolution"
+
+A green build proves compilation, not a working panel. That branch used a kernel
+FBTFT driver writing to `/dev/fb0`. The vendor firmware does neither: its
+`st7789_display` binary opens `/dev/spidev0.1` and toggles GPIO14/16/19 in
+userspace, and its device tree has no FBTFT or st7789v node. A successful build
+of a different architecture is not evidence about this hardware.
+
+### If the panel does not light on first boot
+
+The ordered diagnosis is:
+
+1. `/usr/sbin/yspeed-display --selftest` — does `/dev/spidev0.1` exist, what
+   gpiochip base resolved, which sysfs numbers were exported.
+2. `--test` — colour cycle. Black or white only ⇒ init sequence or backlight.
+   Colours but wrong orientation ⇒ MADCTL. No `/dev/spidev0.1` ⇒ bind/pinmux.
+3. Only if CS1 is genuinely suspect: switch the pinmux group for GPIO6 to
+   `function = "gpio"` **and** add `cs-gpios`, as an experiment. That is a
+   fallback to test, not the documented vendor wiring.
