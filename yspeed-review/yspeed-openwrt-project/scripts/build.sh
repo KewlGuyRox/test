@@ -130,8 +130,8 @@ make -C "$SRC" target/linux/prepare V=s
 SPIDEV_SOURCE="$(find "$SRC/build_dir" -type f -path '*/drivers/spi/spidev.c' -print -quit)"
 [[ -n "$SPIDEV_SOURCE" && -f "$SPIDEV_SOURCE" ]] || { echo "Linux spidev.c not found" >&2; exit 4; }
 # The patch is applied by target/linux/prepare from patches-6.12/. Assert it.
-grep -qF 'yspeed,st7789-spidev' "$SPIDEV_SOURCE" || {
-  echo "spidev.c patch did not apply; check patches/999-spidev-yspeed-match.patch context" >&2
+[[ "$(grep -cF 'yspeed,st7789-spidev' "$SPIDEV_SOURCE")" -ge 2 ]] || {
+  echo "spidev.c patch must register YSPEED in both SPI-ID and OF-ID tables" >&2
   exit 4
 }
 DISPLAY_SOURCE="$PROJECT_DIR/package/yspeed-display/src/yspeed-display.c"

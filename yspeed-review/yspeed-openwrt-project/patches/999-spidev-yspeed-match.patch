@@ -1,5 +1,11 @@
 --- a/drivers/spi/spidev.c
 +++ b/drivers/spi/spidev.c
+@@ -700,6 +700,7 @@
+ static const struct spi_device_id spidev_spi_ids[] = {
++	{ .name = "yspeed,st7789-spidev" },
+ 	{ .name = "bh2228fv" },
+--- a/drivers/spi/spidev.c
++++ b/drivers/spi/spidev.c
 @@ -729,6 +729,7 @@
  }
  
