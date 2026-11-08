@@ -110,13 +110,15 @@ interfaces=[x for x in sections if x["type"]=="interface"]
 wan=[x for x in interfaces if x["name"]=="wan"]
 if len(wan)!=1 or wan[0]["options"].get("device")!="eth0.2" or wan[0]["options"].get("proto")!="dhcp":
     raise SystemExit("Factory default WAN must use DHCP on eth0.2")
+if wan[0]["options"].get("defaultroute")!="0" or wan[0]["options"].get("peerdns")!="0":
+    raise SystemExit("WAN DHCP must not install a default route or peer DNS")
 for item in interfaces:
     name=item["name"]; opts=item["options"]
     if name=="lan":
         raise SystemExit("LAN Layer-3 interface must not be configured")
     if name!="loopback" and opts.get("device")=="eth0.1":
         raise SystemExit(f"eth0.1 must not have a Layer-3 interface ({name})")
-print("Network contract OK: factory default DHCP on eth0.2; no LAN or eth0.1 L3")
+print("Network contract OK: DHCP eth0.2 without default route/peer DNS; no LAN or eth0.1 L3")
 PYNET
 
 make -C "$SRC" defconfig
