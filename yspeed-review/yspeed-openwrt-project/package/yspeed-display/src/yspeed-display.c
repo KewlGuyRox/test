@@ -357,7 +357,7 @@ static int panel_init(struct display *d, const struct config *cfg)
 	};
 	static const uint8_t gamma_neg[] = {
 		0xd0, 0x05, 0x0a, 0x09, 0x08, 0x05, 0x2e,
-		0x44, 0x45, 0x0f, 0x17, 0x16, 0x2b, 0x33
+		0x43, 0x45, 0x0f, 0x16, 0x16, 0x2b, 0x33
 	};
 	const uint8_t colmod = 0x55;
 	const uint8_t madctl = madctl_for(cfg->rotation);
@@ -377,7 +377,6 @@ static int panel_init(struct display *d, const struct config *cfg)
 	msleep(120);
 
 	if (lcd_cmd(d, 0x3a, &colmod, 1) < 0 ||             /* COLMOD RGB565 */
-	    lcd_cmd(d, 0x36, &madctl, 1) < 0 ||             /* MADCTL */
 	    lcd_cmd(d, 0xb2, porch, sizeof(porch)) < 0 ||  /* PORCTRL */
 	    lcd_cmd(d, 0xb7, gate, sizeof(gate)) < 0 ||    /* GCTRL */
 	    lcd_cmd(d, 0xc2, vdvvrhen, sizeof(vdvvrhen)) < 0 ||
@@ -385,13 +384,14 @@ static int panel_init(struct display *d, const struct config *cfg)
 	    lcd_cmd(d, 0xc4, vdvs, sizeof(vdvs)) < 0 ||    /* VDVS */
 	    lcd_cmd(d, 0xbb, vcoms, sizeof(vcoms)) < 0 ||  /* VCOMS */
 	    lcd_cmd(d, 0xc5, vcom_offset, sizeof(vcom_offset)) < 0 ||
-	    lcd_cmd(d, 0xd0, pwctrl, sizeof(pwctrl)) < 0 || /* PWCTRL1 */
-	    lcd_cmd(d, 0xe0, gamma_pos, sizeof(gamma_pos)) < 0 ||
-	    lcd_cmd(d, 0xe1, gamma_neg, sizeof(gamma_neg)) < 0)
+	    lcd_cmd(d, 0xd0, pwctrl, sizeof(pwctrl)) < 0)  /* PWCTRL1 */
 		return -1;
 
 	if (lcd_cmd(d, 0x29, NULL, 0) < 0 || /* DISPON */
-	    lcd_cmd(d, 0x21, NULL, 0) < 0)   /* INVON (HSD20 IPS profile) */
+	    lcd_cmd(d, 0x21, NULL, 0) < 0 || /* INVON (HSD20 IPS profile) */
+	    lcd_cmd(d, 0xe0, gamma_pos, sizeof(gamma_pos)) < 0 ||
+	    lcd_cmd(d, 0xe1, gamma_neg, sizeof(gamma_neg)) < 0 ||
+	    lcd_cmd(d, 0x36, &madctl, 1) < 0) /* MADCTL */
 		return -1;
 
 	msleep(50);
