@@ -78,8 +78,8 @@ Stop and retain the complete log.
 
 For PPS regression testing, do not treat `/dev/pps0` existing as a pass. With the antenna/receiver connected and a valid fix, run `ppstest /dev/pps0` and record several consecutive assertion timestamps and sequence numbers. Expect approximately one-second increments. Then independently inspect Chrony sources/tracking to establish whether PPS is selected and locked; kernel PPS events alone do not prove Chrony discipline.
 
-First verify the network contract. The device should obtain its DHCP address
-but must **not** install a DHCP-provided default route or DNS server.
+First verify the network contract. `eth0.2` should obtain its DHCP address,
+default gateway, and DNS settings from the upstream LAN.
 
 ```sh
 ip -4 addr show dev eth0.2
