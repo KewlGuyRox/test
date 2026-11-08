@@ -22,7 +22,7 @@ OpenWrt while retaining the useful GNSS, NTP, LCD, and management functions.
 
 - **RAM boot only.** No flash writes, `sysupgrade`, `saveenv`, erase, or factory
   image operations. Do not write persistent storage.
-- **Single Ethernet uplink:** WAN port `eth0.2`; DHCP supplies the address only. Do not accept a DHCP default route or DNS (`defaultroute '0'`, `peerdns '0'`). LuCI can configure static IPv4.
+- **Ethernet interface:** `eth0.2` operates as a normal DHCP client on the connected network. Accept the IP address and any gateway/DNS options the DHCP server offers; a server may provide only an address. LuCI must also support manually configured static IPv4, gateway, and DNS.
 - No LAN bridge, no `192.168.88.1/24`, and no wireless packages/radio.
 - Keep all UI and system messages in English.
 
@@ -37,7 +37,7 @@ hardware changes.
 | SoC / target | MT7628AN, `ramips/mt76x8` | Vendor DTB |
 | Flash layout | u-boot 0x0; env 0x30000; factory 0x40000; firmware 0x50000 | Flash dump; never write these partitions |
 | Console | `ttyS0`, 57600 8N1 | Vendor chosen bootargs / U-Boot environment |
-| WAN | `eth0.2`, DHCP address only | Project requirement: do not install a DHCP-provided default route or DNS; static WAN remains available in LuCI |
+| Ethernet | `eth0.2`, normal DHCP client | Accept address plus any offered gateway/DNS; also support static IP, gateway, and DNS through LuCI |
 | Switch VLANs | VLAN1 `1 2 3 4 6t`; VLAN2 `0 6t` | Vendor DTB/config; verify on-device |
 | MAC cells | `…:09` at 0x04, `…:0a` at 0x28, `…:0b` at 0x2e | Flash factory-partition analysis |
 | Deployed WAN MAC | `…:0b` from offset 0x2e | Vendor UCI override; confirm replacement uses this value |
@@ -160,7 +160,7 @@ Never use `saveenv`.
 
 ## 8. Work order
 
-1. Fix WAN DHCP to accept the assigned address only (`defaultroute '0'`, `peerdns '0'`); verify no DHCP default route or DNS is installed, and confirm LuCI can switch to static addressing.
+1. Verify `eth0.2` behaves as a normal DHCP client: it accepts the offered address and any gateway/DNS options, including leases that provide only an address; verify LuCI supports static IP, gateway, and DNS.
 2. Get a green CI build and capture the exact artifact/commit/run evidence.
 3. Validate image format, rootfs contents, DTB, kernel config and package list.
 4. Resolve U-Boot memory layout and approve a safe RAM-boot address.
