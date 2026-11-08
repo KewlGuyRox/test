@@ -193,9 +193,16 @@ cp "$IMAGE" "$WORKDIR/artifacts/yspeed-prevalidation.uImage"
 # "*-initramfs-kernel.bin", but it panics at boot with "VFS: Cannot open root
 # device" because there is no initramfs to mount. Refuse to publish one.
 python3 "$PROJECT_DIR/scripts/validate-initramfs.py" "$IMAGE"
+# Prefer OpenWrt's staged dtc; fall back to the distro host tool. Some OpenWrt
+# configurations do not stage dtc even though the DTB is compiled successfully.
 DTC="$SRC/staging_dir/host/bin/dtc"
+if [[ ! -x "$DTC" ]]; then DTC="$(command -v dtc || true)"; fi
 DTB="$(find "$SRC/build_dir" -type f -name 'image-mt7628an_yspeed_ys-gps-12832.dtb' -print -quit)"
-[[ -x "$DTC" && -n "$DTB" ]] || { echo "Compiled DTB or host dtc not found" >&2; exit 8; }
+[[ -x "$DTC" && -n "$DTB" ]] || {
+  echo "Compiled DTB or host dtc not found (dtc=$DTC, dtb=$DTB)" >&2
+  find "$SRC" -type f -name 'image-mt7628an_yspeed_ys-gps-12832.dtb' -print >&2 || true
+  exit 8
+}
 mkdir -p "$WORKDIR/artifacts"
 "$DTC" -I dtb -O dts "$DTB" > "$WORKDIR/artifacts/yspeed-compiled.dts"
 for token in 'YSPEED YS-GPS-12832' 'pps-gpio' 'dallas,ds1307' 'denx,uimage' 'yspeed,st7789-spidev' 'st7789@1' 'spi_cs1' 'LCD Up' 'LCD Enter' 'LCD Down'; do
