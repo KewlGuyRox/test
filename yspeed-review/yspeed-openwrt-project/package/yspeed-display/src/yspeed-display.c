@@ -795,7 +795,8 @@ static int selftest(void)
 	struct utsname u;
 	int ok = 1;
 
-	printf("== yspeed-display preflight selftest ==\n");\n\tprintf("NOTE: this checks GPIO/SPI/config presence only; it does not prove panel rendering.\n");
+	printf("== yspeed-display preflight selftest ==\n");
+	printf("NOTE: this checks GPIO/SPI/config presence only; it does not prove panel rendering.\n");
 
 	if (uname(&u) == 0)
 		printf("kernel      : %s %s\n", u.sysname, u.release);
