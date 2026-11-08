@@ -13,8 +13,9 @@
  *   GPIO11 PPS, GPIO38 reset button, GPIO44 status LED  -> kernel.
  *
  * The vendor kernel numbered sysfs GPIOs with base 480 (pin 16 == 496).
- * Mainline 6.12 uses base 0 (pin 16 == 16). Userspace resolves the base at
- * runtime; nothing here may hardcode either scheme.
+ * The tested 6.12 image exposes GPIO banks at bases 512, 544 and 576;
+ * bank2 LCD pins 14/16/19 therefore resolve to 590/592/595. Userspace
+ * resolves the exact bank2 base at runtime; never hardcode global numbers.
  */
 /dts-v1/;
 

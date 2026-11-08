@@ -12,9 +12,9 @@
  *   Panel    : 240x320, ST7789, mounted at rotation 270 in the enclosure
  *
  * GPIO offsets are converted to sysfs numbers at runtime by reading
- * /sys/class/gpio/gpiochipN/base. The vendor kernel used base 480 (so pin 16
- * was 496); mainline 6.12 uses base 0 (pin 16 is 16). Hardcoding either one
- * breaks the other, which is exactly why the vendor binary cannot run here.
+ * /sys/class/gpio/gpiochipN/base. The vendor kernel used base 480; the
+ * tested 6.12 image exposes bank2 at base 576 (LCD globals 590/592/595).
+ * Runtime resolution is required because chip bases are kernel-assigned.
  *
  * Keys are owned by the kernel via gpio-keys (GPIO18/23/26) and read through
  * evdev. This program must never export those pins - doing so fails with
