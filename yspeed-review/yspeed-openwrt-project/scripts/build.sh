@@ -184,6 +184,11 @@ fi
 OUT="$SRC/bin/targets/ramips/mt76x8"
 IMAGE="$(find "$OUT" -maxdepth 1 -type f -name '*yspeed_ys-gps-12832-initramfs-kernel.bin' -print -quit)"
 [[ -n "$IMAGE" && -f "$IMAGE" ]] || { echo "Expected initramfs uImage not found" >&2; exit 7; }
+# Preserve the generated image even when a later validation gate fails. This is
+# diagnostic-only: the artifact is not labelled or published as bootable unless
+# every validation gate passes.
+mkdir -p "$WORKDIR/artifacts"
+cp "$IMAGE" "$WORKDIR/artifacts/yspeed-prevalidation.uImage"
 # A kernel-only image passes every CRC check and is still named
 # "*-initramfs-kernel.bin", but it panics at boot with "VFS: Cannot open root
 # device" because there is no initramfs to mount. Refuse to publish one.
