@@ -26,7 +26,7 @@ json_number() {
 }
 gps_data=""
 if command -v gpspipe >/dev/null 2>&1; then
-    gps_data="$(timeout 2 gpspipe -w -n 80 2>/dev/null || true)"
+    gps_data="$(timeout 2 gpspipe -w -n 80 localhost::/dev/ttyS2 2>/dev/null || true)"
 fi
 tpv="$(printf '%s\n' "$gps_data" | grep '"TPV"' | tail -n 1)"
 sky="$(printf '%s\n' "$gps_data" | grep '"SKY"' | tail -n 1)"

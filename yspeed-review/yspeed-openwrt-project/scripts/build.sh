@@ -86,6 +86,21 @@ for dir in "$SRC/files/etc/uci-defaults" "$SRC/files/etc/hotplug.d/iface" "$SRC/
 done
 
 # Default DHCP on eth0.2; static WAN is available in LuCI, and eth0.1 has no L3 interface.
+GPSD_CONFIG="$PROJECT_DIR/files/etc/config/gpsd"
+STATUS_REFRESH="$PROJECT_DIR/files/usr/sbin/yspeed-status-refresh"
+python3 - "$GPSD_CONFIG" "$STATUS_REFRESH" <<'PYGPS'
+import sys
+gpsd=open(sys.argv[1], encoding="utf-8").read()
+status=open(sys.argv[2], encoding="utf-8").read()
+one="list devices '/dev/ttyS1'"
+two="list devices '/dev/ttyS2'"
+if one not in gpsd or two not in gpsd or gpsd.index(one) > gpsd.index(two):
+    raise SystemExit("GPSD must list ttyS1 first (Chrony SHM0) and ttyS2 second (UI)")
+if "localhost::/dev/ttyS2" not in status:
+    raise SystemExit("UI status reader must explicitly select GPSD ttyS2")
+print("GPS UART contract OK: ttyS1 first for SHM0; ttyS2 second for UI")
+PYGPS
+
 NETWORK_CONFIG="$PROJECT_DIR/files/etc/config/network"
 python3 - "$NETWORK_CONFIG" <<'PYNET'
 import shlex, sys
