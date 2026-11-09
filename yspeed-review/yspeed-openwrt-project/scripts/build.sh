@@ -188,9 +188,19 @@ IMAGE="$(find "$OUT" -maxdepth 1 -type f -name '*yspeed_ys-gps-12832-initramfs-k
 # "*-initramfs-kernel.bin", but it panics at boot with "VFS: Cannot open root
 # device" because there is no initramfs to mount. Refuse to publish one.
 python3 "$PROJECT_DIR/scripts/validate-initramfs.py" "$IMAGE"
+# The kernel build uses its in-tree dtc; OpenWrt does not guarantee that
+# a separate host-tools dtc is installed in staging_dir/host/bin.
 DTC="$SRC/staging_dir/host/bin/dtc"
+if [[ ! -x "$DTC" ]]; then
+  DTC="$(find "$SRC/build_dir" -type f -path '*/scripts/dtc/dtc' -print -quit)"
+fi
 DTB="$(find "$SRC/build_dir" -type f -name 'image-mt7628an_yspeed_ys-gps-12832.dtb' -print -quit)"
-[[ -x "$DTC" && -n "$DTB" ]] || { echo "Compiled DTB or host dtc not found" >&2; exit 8; }
+[[ -n "$DTC" && -x "$DTC" && -n "$DTB" && -f "$DTB" ]] || {
+  echo "Compiled DTB or usable dtc not found" >&2
+  echo "DTC candidate: ${DTC:-<none>}" >&2
+  echo "DTB candidate: ${DTB:-<none>}" >&2
+  exit 8
+}
 mkdir -p "$WORKDIR/artifacts"
 "$DTC" -I dtb -O dts "$DTB" > "$WORKDIR/artifacts/yspeed-compiled.dts"
 for token in 'YSPEED YS-GPS-12832' 'pps-gpio' 'dallas,ds1307' 'denx,uimage' 'yspeed,st7789-spidev' 'st7789@1' 'spi_cs1' 'LCD Up' 'LCD Enter' 'LCD Down'; do
