@@ -1,0 +1,9 @@
+#!/bin/sh
+# Restart Chrony after eth0.2 is configured so the NIST/Cloudflare upstreams
+# are reachable using the normal route and DNS supplied by DHCP.
+[ "${ACTION:-}" = "ifup" ] || exit 0
+[ "${INTERFACE:-}" = "wan" ] || exit 0
+[ -x /etc/init.d/chronyd ] || exit 0
+logger -t yspeed-chrony "Ethernet WAN is up; refreshing Chrony network sources"
+ /etc/init.d/chronyd restart
+exit 0

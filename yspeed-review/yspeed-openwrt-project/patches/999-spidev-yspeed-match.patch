@@ -1,0 +1,10 @@
+--- a/drivers/spi/spidev.c
++++ b/drivers/spi/spidev.c
+@@ -729,6 +729,7 @@
+ }
+ 
+ static const struct of_device_id spidev_dt_ids[] = {
++	{ .compatible = "yspeed,st7789-spidev", .data = &spidev_of_check },
+ 	{ .compatible = "cisco,spi-petra", .data = &spidev_of_check },
+ 	{ .compatible = "dh,dhcom-board", .data = &spidev_of_check },
+ 	{ .compatible = "elgin,jg10309-01", .data = &spidev_of_check },

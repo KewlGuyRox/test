@@ -1,0 +1,11 @@
+#!/bin/sh
+# Chrony is the sole NTP daemon on this appliance.
+# OpenWrt's default sysntpd client otherwise occupies UDP/123 and prevents
+# chronyd from opening its NTP socket.
+uci -q set system.ntp.enabled='0'
+uci -q set system.ntp.use_dhcp='0'
+uci -q set system.ntp.enable_server='0'
+uci -q delete system.ntp.server 2>/dev/null || true
+uci -q commit system
+/etc/init.d/sysntpd stop 2>/dev/null || true
+exit 0

@@ -1,0 +1,16 @@
+PASS: legacy uImage magic 0x27051956
+PASS: header CRC stored=92b579f1 computed=92b579f1
+PASS: payload size header=2142131 actual=2142131
+PASS: file length=2142195 header+payload=2142195
+PASS: data CRC stored=678980f2 computed=678980f2
+PASS: OS id=5 (Linux=5)
+PASS: architecture=5 (MIPS=5)
+PASS: image type=2 (kernel=2)
+PASS: compression=3 (LZMA=3)
+PASS: load address=0x80000000
+PASS: entry address=0x80000000
+file_bytes=2142195
+payload_bytes=2142131
+sha256=796515205d5397b61995d0126937c26c144a414bcaf9ff4f80b4e4a220345846
+firmware_partition_bytes=33226752 (reference only; this artifact is RAM-boot-only)
+flash_write_permitted=no

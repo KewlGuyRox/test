@@ -1,0 +1,34 @@
+#!/bin/sh
+# Apply a checksummed rootfs-overlay patch bundle to the running appliance.
+# This does not flash MTD. On initramfs builds changes last until reboot.
+set -eu
+if [ "$#" -ne 2 ]; then
+    echo "Usage: yspeed-apply-update <bundle.tar.gz> <expected-sha256>" >&2
+    exit 2
+fi
+bundle="$1"
+expected="$2"
+[ -f "$bundle" ] || { echo "Bundle not found: $bundle" >&2; exit 2; }
+case "$expected" in
+    *[!0-9a-fA-F]*|'') echo "Invalid SHA-256 value" >&2; exit 2 ;;
+esac
+[ "${#expected}" -eq 64 ] || { echo "SHA-256 must be 64 hex characters" >&2; exit 2; }
+actual="$(sha256sum "$bundle" | awk '{print $1}')"
+[ "$actual" = "$expected" ] || { echo "Checksum mismatch; refusing update" >&2; exit 3; }
+listing="$(tar -tzf "$bundle")" || { echo "Invalid tar archive" >&2; exit 3; }
+printf '%s\n' "$listing" | grep -Eq '(^/|(^|/)\.\.(/|$))' && {
+    echo "Unsafe archive path; refusing update" >&2; exit 3;
+}
+echo "Verified SHA-256: $actual"
+echo "Files to be overlaid:"
+printf '%s\n' "$listing"
+echo "This updates the running root filesystem only; it does NOT flash firmware."
+printf "Type APPLY to continue: "
+read answer
+[ "$answer" = "APPLY" ] || { echo "Cancelled"; exit 4; }
+tar -xzf "$bundle" -C /
+[ -x /etc/init.d/chronyd ] && /etc/init.d/chronyd restart || true
+[ -x /etc/init.d/gpsd ] && /etc/init.d/gpsd restart || true
+[ -x /etc/init.d/uhttpd ] && /etc/init.d/uhttpd restart || true
+[ -x /etc/init.d/yspeed-display ] && /etc/init.d/yspeed-display restart || true
+echo "Overlay update applied. No flash partition was written."

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>YSPEED GNSS NTP</title>
+<style>
+:root{color-scheme:dark;font:16px system-ui,sans-serif;background:#0b1420;color:#e8f0f7}
+body{max-width:1050px;margin:0 auto;padding:22px}
+h1{font-size:1.5rem;margin:0}.sub{color:#9fb2c4;margin:5px 0 20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+section{background:#142638;border:1px solid #28445b;border-radius:12px;padding:16px}
+h2{font-size:1rem;color:#8bd8d0;margin:0 0 12px}
+.big{font-size:2rem;font-weight:650;margin:3px 0 12px}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid #294052}
+.kv span:first-child{color:#9fb2c4}.kv span:last-child{text-align:right;overflow-wrap:anywhere}
+.state{display:inline-block;padding:4px 9px;border-radius:20px;background:#34485a}
+.satwrap{overflow-x:auto}.satrow{display:grid;grid-template-columns:54px 70px 1fr 82px 72px;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid #294052;font-size:.9rem}.bar{height:9px;background:#254154;border-radius:8px;overflow:hidden}.bar i{display:block;height:100%;background:#8bd8d0}.bar i.used{background:#48d7a3}
+.good{background:#155b48}.warn{background:#70501b}.bad{background:#702e35}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.78rem;color:#c3d3df;max-height:180px;overflow:auto}
+footer{color:#8da3b6;font-size:.8rem;margin-top:16px}
+</style>
+</head>
+<body>
+<h1>YSPEED GNSS NTP</h1>
+<div class="sub">Live device telemetry · refreshes every 2 seconds</div>
+<div class="grid">
+<section><h2>GNSS POSITION</h2><div id="fix" class="big">Loading…</div>
+<div class="kv"><span>Receiver UTC</span><span id="utc">—</span></div>
+<div class="kv"><span>UTC reported</span><span id="utcreported">—</span></div>
+<div class="kv"><span>Precision eligible</span><span id="utceligible">—</span></div>
+<div class="kv"><span>Latitude</span><span id="lat">—</span></div>
+<div class="kv"><span>Longitude</span><span id="lon">—</span></div>
+<div class="kv"><span>Altitude</span><span id="alt#���G����ƭy�iv class="kv"><span>Signal quality</span><span id="quality">—</span></div>
+<div class="kv"><span>HDOP / VDOP / PDOP</span><span id="dop">—</span></div>
+<div class="kv"><span>Speed / course</span><span id="motion">—</span></div></section>
+<section style="grid-column:1/-1"><h2>LIVE SATELLITES</h2><div id="satellites" class="satwrap">Waiting for receiver data…</div><div class="sub">Signal bars use the same receiver snapshot shown on the LCD. Green bars are used in the fix.</div></section>
+<section><h2>NTP DISCIPLINE</h2><div id="ntpstate" class="big">—</div>
+<div class="kv"><span>Selected reference</span><span id="ref">—</span></div>
+<div class="kv"><span>Stratum</span><span id="stratum">—</span></div>
+<div class="kv"><span>Leap status</span><span id="leap">—</span></div>
+<div class="kv"><span>Last offset</span><span id="offset">—</span></div>
+<div class="kv"><span>RMS offset</span><span id="rms">—</span></div></section>
+<section><h2>PPS AND RTC</h2><div class="kv"><span>PPS device</span><span id="ppsdev">—</span></div>
+<div class="kv"><span>Last assert</span><span id="assert">—</span></div>
+<div class="kv"><span>RTC read</span><span id="rtc">—</span></div>
+<p class="sub">Precision eligibility appears only when Chrony selects or combines PPS while the receiver reports a valid fix.</p></section>
+<section><h2>ETHERNET</h2><div class="kv"><span>Interface</span><span>eth0.2</span></div>
+<div class="kv"><span>IPv4</span><span id="ip">—</span></div>
+<div class="kv"><span>Gateway</span><span id="gw">—</span></div>
+<div class="kv"><span>DNS</span><span id="dns">—</span></div>
+<div class="kv"><span>Uptime</span><span id="uptime">—</span></div></section>
+<section style="grid-column:1/-1"><h2>CHRONY SOURCE DETAILS</h2><pre id="sources">Waiting for chronyd…</pre></section>
+</div>
+<footer>Values are reported by the device. Missing data is shown as unavailable; no simulated satellite or timing values are generated. Last update: <span id="updated">—</span></footer>
+<script>
+const el=id=>document.getElementById(id);
+const show=(id,v)=>el(id).textContent=(v===null||v===undefined||v===""?"Unavailable":v);
+function state(id,value){const e=el(id);e.textContent=value||"Unavailable";e.className="big state "+(value==="SYNCED"||value==="3D"?"good":value==="2D"||value==="HOLDOVER"?"warn":"bad")}
+function renderSatellites(list){const root=el('satellites');root.replaceChildren();const sats=(Array.isArray(list)?list:[]).filter(s=>Number(s.snr)>0);if(!sats.length){root.textContent='No satellites reporting signal';return}const systems=['GPS','SBAS','Galileo','BeiDou','IMES','QZSS','GLONASS','NavIC'];const head=document.createElement('div');head.className='satrow';['PRN','SYSTEM','SIGNAL','SNR','STATE'].forEach(v=>{const c=document.createElement('span');c.textContent=v;head.append(c)});root.append(head);for(const s of sats){const row=document.createElement('div');row.className='satrow';const prn=document.createElement('span');prn.textContent=String(s.prn??'—');const system=document.createElement('span');system.textContent=systems[Number(s.gnss)]||'Other';const bar=document.createElement('span');bar.className='bar';const fill=document.createElement('i');fill.className=s.used?'used':'';fill.style.width=Math.max(0,Math.min(100,Number(s.snr)*2))+'%';bar.append(fill);const snr=document.createElement('span');snr.textContent=String(s.snr)+' dB-Hz';const state=document.createElement('span');state.textContent=s.used?'USED':'TRACKED';[prn,system,bar,snr,state].forEach(c=>row.append(c));root.append(row)}}
+async function refresh(){
+ try{
+  const r=await fetch('/cgi-bin/yspeed-status',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);
+  const d=await r.json(),g=d.gnss||{},n=d.ntp||{},p=d.pps||{},net=d.network||{};
+  state('fix',g.fix);show('utc',g.utc);show('utcreported',g.utc_reported?'YES':'NO');
+  show('utceligible',g.utc_precision_eligible?'YES — PPS discipline active':'NO — PPS not selected');renderSatellites(g.satellites);
+  show('lat',g.latitude);show('lon',g.longitude);show('alt',g.altitude_m===null?null:g.altitude_m+' m');show('sats',g.satellites_reported);show('satused',g.satellites_used);show('quality',g.quality===null||g.quality===undefined?null:g.quality+'%');
+  show('dop',[g.hdop,g.vdop,g.pdop].map(v=>v===null||v===undefined?'—':v).join(' / '));
+  show('motion',g.speed_mps===null||g.speed_mps===undefined?'Unavailable':g.speed_mps+' m/s · '+(g.course_deg??'—')+'°');
+  state('ntpstate',n.state);show('ref',n.reference);show('stratum',n.stratum);show('leap',n.leap_status);show('offset',n.last_offset);show('rms',n.rms_offset);
+  show('ppsdev',p.device?'present':'not detected');show('assert',p.assert);show('rtc',d.rtc);
+  show('ip',net.ipv4);show('gw',net.gateway);show('dns',net.dns);show('uptime',d.uptime_seconds===null?null:Math.floor(d.uptime_seconds)+' s');
+  show('sources',n.sources);show('updated',d.timestamp);
+ }catch(e){show('fix','STATUS API ERROR: '+e.message)}
+}
+refresh();setInterval(refresh,2000);
+</script>
+</body></html>
