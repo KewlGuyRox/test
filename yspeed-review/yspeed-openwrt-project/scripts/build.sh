@@ -133,7 +133,7 @@ DISPLAY_SOURCE="$PROJECT_DIR/package/yspeed-display/src/yspeed-display.c"
 python3 - "$DISPLAY_SOURCE" <<'PYGPIO'
 import re, sys
 source = open(sys.argv[1], encoding="utf-8").read()
-code = re.sub(r"/\\*[\\s\\S]*?\\*/|//[^\\n]*", "", source)
+code = re.sub(r"/\*[\s\S]*?\*/|//[^\n]*", "", source)
 required = [
     "GPIO_BANK_WIDTH 32",
     'strstr(label, "gpio-bank")',
