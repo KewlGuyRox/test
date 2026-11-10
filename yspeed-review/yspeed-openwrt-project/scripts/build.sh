@@ -129,6 +129,30 @@ grep -qF 'yspeed,st7789-spidev' "$SPIDEV_SOURCE" || {
   exit 4
 }
 DISPLAY_SOURCE="$PROJECT_DIR/package/yspeed-display/src/yspeed-display.c"
+# GPIO regression guard: require exact bank selection and reject double offsets.
+python3 - "$DISPLAY_SOURCE" <<'PYGPIO'
+import re, sys
+source = open(sys.argv[1], encoding="utf-8").read()
+required = [
+    "GPIO_BANK_WIDTH 32",
+    'strstr(label, "gpio-bank")',
+    '"exact SoC bank match"',
+    "*number = resolved;",
+    "g_gpio_chip_bank != pins[i].offset / GPIO_BANK_WIDTH",
+    "g_gpio_line_offset != pins[i].offset % GPIO_BANK_WIDTH",
+]
+missing = [item for item in required if item not in source]
+if missing:
+    raise SystemExit("GPIO safety checks missing: " + ", ".join(missing))
+for pattern in (r"resolved\s*\+\s*offset",
+                r"fallback\s*\+\s*offset",
+                r"base\s*\+\s*pins\s*\[\s*i\s*\]\s*\.\s*offset"):
+    if re.search(pattern, source):
+        raise SystemExit("Unsafe GPIO double-offset expression remains: " + pattern)
+if "sole candidate" in source or "first controller wide enough" in source:
+    raise SystemExit("Unsafe arbitrary GPIO fallback remains")
+print("GPIO source guard OK: exact bank resolver, fail-closed mapping, no double offset")
+PYGPIO
 grep -q '/dev/spidev0.1' "$DISPLAY_SOURCE" || { echo "SPI userspace app missing spidev device" >&2; exit 5; }
 if grep -q '/dev/fb0' "$DISPLAY_SOURCE"; then echo "Framebuffer dependency remains" >&2; exit 5; fi
 # Let the top-level build construct the host tools and cross toolchain before

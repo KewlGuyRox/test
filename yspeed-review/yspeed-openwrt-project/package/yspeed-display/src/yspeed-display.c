@@ -164,55 +164,53 @@ static int read_int_file(const char *path, int *out)
 }
 
 /*
- * Resolve the sysfs base of the GPIO controller that owns a SoC pin offset.
- * Prefers a chip whose label names the MT7628/MT7621 block, but falls back to
- * the first controller wide enough to contain the offset.
+ * Resolve one MT7628 SoC GPIO offset to its global legacy-sysfs number.
+ * gpiochipN is a directory name, not a GPIO number. Match the exact
+ * controller label and gpio-bankN suffix, then use base + bank-local line.
+ * Fail closed on missing, duplicated, or inconsistent bank information.
  */
+#define GPIO_BANK_WIDTH 32
+
+static int g_gpio_chip_base = -1;
+static int g_gpio_chip_bank = -1;
+static int g_gpio_line_offset = -1;
+
 static int gpio_chip_base_for(int offset)
 {
-	DIR *dir = opendir("/sys/class/gpio");
+	DIR *dir;
 	struct dirent *entry;
-	int bases[8];
-	int spans[8];
-	char labels[8][128];
-	int found = 0;
-	int min_base = -1;
-	int fallback = -1;
-	int candidates = 0;
-	int chosen = -1;
-	int i;
+	int matches = 0, chosen = -1;
+	int expected_bank, line_offset;
 
 	g_gpio_chip_label[0] = '\0';
 	g_gpio_chip_rule = "none";
+	g_gpio_chip_base = -1;
+	g_gpio_chip_bank = -1;
+	g_gpio_line_offset = -1;
+	if (offset < 0)
+		return -1;
 
+	expected_bank = offset / GPIO_BANK_WIDTH;
+	line_offset = offset % GPIO_BANK_WIDTH;
+	dir = opendir("/sys/class/gpio");
 	if (!dir)
 		return -1;
 
-	/*
-	 * Collect every controller that names the SoC GPIO block. The block is
-	 * exposed as several 32-line banks (512, 544, 576 on this board), so a pin
-	 * number is not "base + offset" for an arbitrary bank: the bank that owns
-	 * the pin must be selected first, then the offset is applied relative to
-	 * that bank's first pin.
-	 */
-	while ((entry = readdir(dir)) && found < 8) {
-		char path[256];
-		char label[128] = "";
-		int base = -1;
-		int ngpio = 0;
+	while ((entry = readdir(dir)) != NULL) {
+		char path[256], label[128] = "";
+		char *bank_text, *bank_end;
+		long bank;
+		int base = -1, ngpio = 0;
 		FILE *f;
 
 		if (strncmp(entry->d_name, "gpiochip", 8) != 0)
 			continue;
-
 		snprintf(path, sizeof(path), "/sys/class/gpio/%s/base", entry->d_name);
 		if (read_int_file(path, &base) < 0)
 			continue;
-
 		snprintf(path, sizeof(path), "/sys/class/gpio/%s/ngpio", entry->d_name);
 		if (read_int_file(path, &ngpio) < 0)
 			continue;
-
 		snprintf(path, sizeof(path), "/sys/class/gpio/%s/label", entry->d_name);
 		f = fopen(path, "r");
 		if (f) {
@@ -220,62 +218,61 @@ static int gpio_chip_base_for(int offset)
 				label[0] = '\0';
 			fclose(f);
 		}
-
 		if (base < 0 || ngpio <= 0)
 			continue;
+		if (!strstr(label, "10000600") && !strstr(label, "mt7628") &&
+		    !strstr(label, "mt7621"))
+			continue;
 
-		if (strstr(label, "10000600") || strstr(label, "mt7628") ||
-		    strstr(label, "mt7621")) {
-			bases[found] = base;
-			spans[found] = ngpio;
-			snprintf(labels[found], sizeof(labels[found]), "%s", label);
-			if (min_base < 0 || base < min_base)
-				min_base = base;
-			found++;
-		} else {
-			candidates++;
-			if (fallback < 0)
-				fallback = base;
-		}
+		bank_text = strstr(label, "gpio-bank");
+		if (!bank_text)
+			continue;
+		bank_text += strlen("gpio-bank");
+		errno = 0;
+		bank = strtol(bank_text, &bank_end, 10);
+		if (errno || bank_end == bank_text ||
+		    (*bank_end != '\0' && *bank_end != '\n' &&
+		     *bank_end != '\r' && *bank_end != ' '))
+			continue;
+		if (bank != expected_bank || bank < 0 || bank > 2 ||
+		    line_offset >= ngpio)
+			continue;
+
+		matches++;
+		chosen = base + line_offset;
+		g_gpio_chip_base = base;
+		g_gpio_chip_bank = (int)bank;
+		g_gpio_line_offset = line_offset;
+		snprintf(g_gpio_chip_label, sizeof(g_gpio_chip_label), "%s", label);
 	}
-
 	closedir(dir);
 
-	if (found > 0) {
-		/* Pick the bank whose pin range contains the offset. */
-		for (i = 0; i < found; i++) {
-			int first_pin = bases[i] - min_base;
-
-			if (offset >= first_pin && offset < first_pin + spans[i]) {
-				chosen = bases[i] + (offset - first_pin);
-				snprintf(g_gpio_chip_label, sizeof(g_gpio_chip_label),
-					 "%s", labels[i]);
-				g_gpio_chip_rule = "bank match";
-				return chosen;
-			}
-		}
-		g_gpio_chip_rule = "no bank covers offset";
+	if (matches != 1) {
+		g_gpio_chip_rule = matches > 1 ? "duplicate SoC bank, refusing" :
+			"expected SoC bank not found, refusing";
+		g_gpio_chip_base = -1;
+		g_gpio_chip_bank = -1;
+		g_gpio_line_offset = -1;
+		g_gpio_chip_label[0] = '\0';
 		return -1;
 	}
-
-	/*
-	 * No controller named itself. Accept a single unlabelled chip covering the
-	 * offset, but never guess between several: exporting another controller's
-	 * lines is worse than failing.
-	 */
-	if (candidates == 1) {
-		g_gpio_chip_rule = "sole candidate";
-		return fallback + offset;
-	}
-	g_gpio_chip_rule = candidates > 1 ? "ambiguous, refusing" : "no candidate";
-	return -1;
+	g_gpio_chip_rule = "exact SoC bank match";
+	return chosen;
 }
 
 static int gpio_claim(int offset, int *number, int initial)
 {
 	char path[160];
 	char text[32];
-	int resolved = gpio_chip_base_for(offset);
+	int resolved;
+
+	/* Only the three dedicated LCD outputs may be exported by this process. */
+	if (offset != GPIO_DC_OFFSET && offset != GPIO_RESET_OFFSET &&
+	    offset != GPIO_BACKLIGHT_OFFSET) {
+		fprintf(stderr, "gpio: refusing non-LCD SoC offset %d\\n", offset);
+		return -1;
+	}
+	resolved = gpio_chip_base_for(offset);
 
 	if (resolved < 0) {
 		fprintf(stderr, "gpio: no gpiochip covers offset %d "
@@ -878,19 +875,34 @@ static int selftest(void)
 		{ "LCD_DC", GPIO_DC_OFFSET },
 		{ "LCD_BACKLIGHT", GPIO_BACKLIGHT_OFFSET },
 	};
+	int resolved_numbers[sizeof(pins) / sizeof(pins[0])];
+
 	for (size_t i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
 		int resolved = gpio_chip_base_for(pins[i].offset);
-
+		resolved_numbers[i] = resolved;
 		if (resolved < 0) {
-			printf("%-12s: offset %d -> NOT RESOLVABLE (%s)\n",
+			printf("%-12s: SoC offset %d -> NOT RESOLVABLE (%s)\\n",
 			       pins[i].name, pins[i].offset, g_gpio_chip_rule);
 			ok = 0;
+		} else if (g_gpio_chip_bank != pins[i].offset / GPIO_BANK_WIDTH ||
+			   g_gpio_line_offset != pins[i].offset % GPIO_BANK_WIDTH ||
+			   resolved != g_gpio_chip_base + g_gpio_line_offset) {
+			printf("%-12s: SoC offset %d -> INVALID mapping (base=%d bank=%d line=%d resolved=%d)\\n",
+			       pins[i].name, pins[i].offset, g_gpio_chip_base,
+			       g_gpio_chip_bank, g_gpio_line_offset, resolved);
+			ok = 0;
 		} else {
-			/* resolver returns the GPIO number; do not add the offset again */
-			printf("%-12s: offset %d -> sysfs gpio%d  [chip label '%s', %s]\n",
-			       pins[i].name, pins[i].offset,
-			       resolved,
-			       g_gpio_chip_label, g_gpio_chip_rule);
+			for (size_t j = 0; j < i; j++) {
+				if (resolved_numbers[j] == resolved) {
+					printf("%-12s: SoC offset %d -> DUPLICATE GPIO %d\\n",
+					       pins[i].name, pins[i].offset, resolved);
+					ok = 0;
+				}
+			}
+			printf("%-12s: SoC offset %d -> bank %d, chip base %d, line %d, sysfs gpio%d [%s]\\n",
+			       pins[i].name, pins[i].offset, g_gpio_chip_bank,
+			       g_gpio_chip_base, g_gpio_line_offset, resolved,
+			       g_gpio_chip_rule);
 		}
 	}
 
