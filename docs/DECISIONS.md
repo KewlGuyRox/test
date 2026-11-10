@@ -153,3 +153,25 @@ For `pull_request`, GitHub evaluates the **whole PR diff** against the workflow'
 `paths` filter, so *any* push to the PR branch restarts the build — including a
 docs-only commit. Builds are therefore dispatched manually from `build/final`,
 which has its own concurrency group. Batch changes; do not push mid-build.
+
+## 12. `gpio_chip_base_for()` returns a GPIO number, not a base
+
+Despite the name, the function returns the **final global GPIO number**: it
+selects the bank that owns the pin and adds the offset within that bank. Callers
+must use the value directly.
+
+Two callers previously did `returned + offset`, giving:
+
+| Signal | Correct | Double-added | That pin actually is |
+|---|---|---|---|
+| Reset | 526 | 540 | pin 28 |
+| D/C | 528 | 544 | pin 32 |
+| Backlight | 531 | **550** | **the front-panel reset button** |
+
+Driving 550 as an output would have toggled the hardware reset line of the
+appliance while trying to switch on the backlight.
+
+The rule is now stated at both call sites with a "never reintroduce
+resolved + offset" comment. If the function is ever refactored to return a base,
+both call sites and the `--selftest` printer must change together — and
+`--selftest` must show 526 / 528 / 531 for reset / D/C / backlight.

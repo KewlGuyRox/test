@@ -275,14 +275,20 @@ static int gpio_claim(int offset, int *number, int initial)
 {
 	char path[160];
 	char text[32];
-	int base = gpio_chip_base_for(offset);
+	int resolved = gpio_chip_base_for(offset);
 
-	if (base < 0) {
+	if (resolved < 0) {
 		fprintf(stderr, "gpio: no gpiochip covers offset %d "
 			"(is CONFIG_GPIO_SYSFS enabled?)\n", offset);
 		return -1;
 	}
-	*number = base + offset;
+	/*
+	 * gpio_chip_base_for() already returns the global GPIO number, having
+	 * selected the bank that owns the pin. Adding the offset again drives a
+	 * different line entirely: offset 19 became 531 + 19 = 550, which is the
+	 * front-panel reset button. Never reintroduce "resolved + offset" here.
+	 */
+	*number = resolved;
 	if (*number < 0)
 		return -1;
 
@@ -873,16 +879,17 @@ static int selftest(void)
 		{ "LCD_BACKLIGHT", GPIO_BACKLIGHT_OFFSET },
 	};
 	for (size_t i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
-		int base = gpio_chip_base_for(pins[i].offset);
+		int resolved = gpio_chip_base_for(pins[i].offset);
 
-		if (base < 0) {
+		if (resolved < 0) {
 			printf("%-12s: offset %d -> NOT RESOLVABLE (%s)\n",
 			       pins[i].name, pins[i].offset, g_gpio_chip_rule);
 			ok = 0;
 		} else {
+			/* resolver returns the GPIO number; do not add the offset again */
 			printf("%-12s: offset %d -> sysfs gpio%d  [chip label '%s', %s]\n",
 			       pins[i].name, pins[i].offset,
-			       base + pins[i].offset,
+			       resolved,
 			       g_gpio_chip_label, g_gpio_chip_rule);
 		}
 	}
