@@ -133,6 +133,7 @@ DISPLAY_SOURCE="$PROJECT_DIR/package/yspeed-display/src/yspeed-display.c"
 python3 - "$DISPLAY_SOURCE" <<'PYGPIO'
 import re, sys
 source = open(sys.argv[1], encoding="utf-8").read()
+code = re.sub(r"/\\*[\\s\\S]*?\\*/|//[^\\n]*", "", source)
 required = [
     "GPIO_BANK_WIDTH 32",
     'strstr(label, "gpio-bank")',
@@ -147,7 +148,7 @@ if missing:
 for pattern in (r"resolved\s*\+\s*offset",
                 r"fallback\s*\+\s*offset",
                 r"base\s*\+\s*pins\s*\[\s*i\s*\]\s*\.\s*offset"):
-    if re.search(pattern, source):
+    if re.search(pattern, code):
         raise SystemExit("Unsafe GPIO double-offset expression remains: " + pattern)
 if "sole candidate" in source or "first controller wide enough" in source:
     raise SystemExit("Unsafe arbitrary GPIO fallback remains")
