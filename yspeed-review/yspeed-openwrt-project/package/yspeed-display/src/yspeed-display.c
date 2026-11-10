@@ -301,7 +301,8 @@ static int gpio_claim(int offset, int *number, int initial)
 	snprintf(path, sizeof(path), "%s/gpio%d", g_gpio_sysfs_root, *number);
 	if (access(path, F_OK) != 0) {
 		snprintf(text, sizeof(text), "%d", *number);
-		if (write_text((snprintf(path, sizeof(path), "%s/export", g_gpio_sysfs_root), path), text) < 0) {
+		snprintf(path, sizeof(path), "%s/export", g_gpio_sysfs_root);
+		if (write_text(path, text) < 0) {
 			fprintf(stderr, "gpio: export %d failed: %s\n",
 				*number, strerror(errno));
 			return -1;
