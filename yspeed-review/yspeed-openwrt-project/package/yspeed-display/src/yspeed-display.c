@@ -26,6 +26,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input.h>
+#include <limits.h>
 #include <linux/spi/spidev.h>
 #include <poll.h>
 #include <signal.h>
@@ -170,6 +171,9 @@ static int read_int_file(const char *path, int *out)
  * Fail closed on missing, duplicated, or inconsistent bank information.
  */
 #define GPIO_BANK_WIDTH 32
+#define GPIO_BANK_COUNT 3 /* MT7628 SoC exposes gpio-bank0 through gpio-bank2. */
+
+static char g_gpio_sysfs_root[PATH_MAX] = "/sys/class/gpio";
 
 static int g_gpio_chip_base = -1;
 static int g_gpio_chip_bank = -1;
@@ -192,7 +196,7 @@ static int gpio_chip_base_for(int offset)
 
 	expected_bank = offset / GPIO_BANK_WIDTH;
 	line_offset = offset % GPIO_BANK_WIDTH;
-	dir = opendir("/sys/class/gpio");
+	dir = opendir(g_gpio_sysfs_root);
 	if (!dir)
 		return -1;
 
@@ -205,13 +209,13 @@ static int gpio_chip_base_for(int offset)
 
 		if (strncmp(entry->d_name, "gpiochip", 8) != 0)
 			continue;
-		snprintf(path, sizeof(path), "/sys/class/gpio/%s/base", entry->d_name);
+		snprintf(path, sizeof(path), "%s/%s/base", g_gpio_sysfs_root, entry->d_name);
 		if (read_int_file(path, &base) < 0)
 			continue;
-		snprintf(path, sizeof(path), "/sys/class/gpio/%s/ngpio", entry->d_name);
+		snprintf(path, sizeof(path), "%s/%s/ngpio", g_gpio_sysfs_root, entry->d_name);
 		if (read_int_file(path, &ngpio) < 0)
 			continue;
-		snprintf(path, sizeof(path), "/sys/class/gpio/%s/label", entry->d_name);
+		snprintf(path, sizeof(path), "%s/%s/label", g_gpio_sysfs_root, entry->d_name);
 		f = fopen(path, "r");
 		if (f) {
 			if (!fgets(label, sizeof(label), f))
@@ -234,7 +238,7 @@ static int gpio_chip_base_for(int offset)
 		    (*bank_end != '\0' && *bank_end != '\n' &&
 		     *bank_end != '\r' && *bank_end != ' '))
 			continue;
-		if (bank != expected_bank || bank < 0 || bank > 2 ||
+		if (bank != expected_bank || bank < 0 || bank >= GPIO_BANK_COUNT ||
 		    line_offset >= ngpio)
 			continue;
 
@@ -260,6 +264,12 @@ static int gpio_chip_base_for(int offset)
 	return chosen;
 }
 
+static int gpio_lcd_offset_allowed(int offset)
+{
+	return offset == GPIO_DC_OFFSET || offset == GPIO_RESET_OFFSET ||
+	       offset == GPIO_BACKLIGHT_OFFSET;
+}
+
 static int gpio_claim(int offset, int *number, int initial)
 {
 	char path[160];
@@ -267,8 +277,7 @@ static int gpio_claim(int offset, int *number, int initial)
 	int resolved;
 
 	/* Only the three dedicated LCD outputs may be exported by this process. */
-	if (offset != GPIO_DC_OFFSET && offset != GPIO_RESET_OFFSET &&
-	    offset != GPIO_BACKLIGHT_OFFSET) {
+	if (!gpio_lcd_offset_allowed(offset)) {
 		fprintf(stderr, "gpio: refusing non-LCD SoC offset %d\n", offset);
 		return -1;
 	}
@@ -289,10 +298,10 @@ static int gpio_claim(int offset, int *number, int initial)
 	if (*number < 0)
 		return -1;
 
-	snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d", *number);
+	snprintf(path, sizeof(path), "%s/gpio%d", g_gpio_sysfs_root, *number);
 	if (access(path, F_OK) != 0) {
 		snprintf(text, sizeof(text), "%d", *number);
-		if (write_text("/sys/class/gpio/export", text) < 0) {
+		if (write_text((snprintf(path, sizeof(path), "%s/export", g_gpio_sysfs_root), path), text) < 0) {
 			fprintf(stderr, "gpio: export %d failed: %s\n",
 				*number, strerror(errno));
 			return -1;
@@ -300,14 +309,14 @@ static int gpio_claim(int offset, int *number, int initial)
 		msleep(25);
 	}
 
-	snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/direction", *number);
+	snprintf(path, sizeof(path), "%s/gpio%d/direction", g_gpio_sysfs_root, *number);
 	if (write_text(path, "out") < 0) {
 		fprintf(stderr, "gpio: direction for %d failed: %s\n",
 			*number, strerror(errno));
 		return -1;
 	}
 
-	snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/value", *number);
+	snprintf(path, sizeof(path), "%s/gpio%d/value", g_gpio_sysfs_root, *number);
 	snprintf(text, sizeof(text), "%d", initial);
 	return write_text(path, text);
 }
@@ -317,7 +326,7 @@ static int gpio_set(int number, int value)
 	char path[160];
 	char text[4];
 
-	snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/value", number);
+	snprintf(path, sizeof(path), "%s/gpio%d/value", g_gpio_sysfs_root, number);
 	snprintf(text, sizeof(text), "%d", value ? 1 : 0);
 	return write_text(path, text);
 }
@@ -848,13 +857,13 @@ static int selftest(void)
 				if (strncmp(entry->d_name, "gpiochip", 8) != 0)
 					continue;
 				snprintf(path, sizeof(path),
-					 "/sys/class/gpio/%s/base", entry->d_name);
+					 "%s/%s/base", g_gpio_sysfs_root, entry->d_name);
 				read_int_file(path, &base);
 				snprintf(path, sizeof(path),
-					 "/sys/class/gpio/%s/ngpio", entry->d_name);
+					 "%s/%s/ngpio", g_gpio_sysfs_root, entry->d_name);
 				read_int_file(path, &ngpio);
 				snprintf(path, sizeof(path),
-					 "/sys/class/gpio/%s/label", entry->d_name);
+					 "%s/%s/label", g_gpio_sysfs_root, entry->d_name);
 				f = fopen(path, "r");
 				if (f) {
 					if (!fgets(label, sizeof(label), f))

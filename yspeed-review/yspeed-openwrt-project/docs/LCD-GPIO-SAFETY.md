@@ -39,3 +39,19 @@ that the panel wiring matches the device tree. On the unit, inspect every
 yspeed-display --selftest. Confirm offsets 14/16/19 resolve to bank-0 lines
 14/16/19 and that no key/PPS/reset/LED line is exported. Only then run the
 panel test. RAM boot only; never write persistent flash.
+
+
+## Automated host-side resolver tests
+
+The build runs `scripts/test-gpio-resolver.sh` before the OpenWrt compilation.
+It compiles the production C translation unit into a host test harness and
+redirects GPIO sysfs discovery to disposable temporary directories. The tests
+exercise both vendor-style base 512 and mainline-style base 0, exact bank
+selection, wrong-bank rejection, duplicate candidates, incomplete metadata,
+undersized banks, unsupported bank 3, and the LCD-only GPIO claim allowlist.
+No real GPIO sysfs export or hardware line is touched by these tests.
+
+The MT7628 platform constraint is named `GPIO_BANK_COUNT=3` (banks 0..2).
+The resolver computes the expected bank from the SoC offset and fails closed
+outside that platform range. This is a hardware-specific contract, not a
+portable assumption about all GPIO controllers.
