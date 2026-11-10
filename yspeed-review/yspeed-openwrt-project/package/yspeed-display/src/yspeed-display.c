@@ -269,7 +269,7 @@ static int gpio_claim(int offset, int *number, int initial)
 	/* Only the three dedicated LCD outputs may be exported by this process. */
 	if (offset != GPIO_DC_OFFSET && offset != GPIO_RESET_OFFSET &&
 	    offset != GPIO_BACKLIGHT_OFFSET) {
-		fprintf(stderr, "gpio: refusing non-LCD SoC offset %d\\n", offset);
+		fprintf(stderr, "gpio: refusing non-LCD SoC offset %d\n", offset);
 		return -1;
 	}
 	resolved = gpio_chip_base_for(offset);
@@ -881,25 +881,25 @@ static int selftest(void)
 		int resolved = gpio_chip_base_for(pins[i].offset);
 		resolved_numbers[i] = resolved;
 		if (resolved < 0) {
-			printf("%-12s: SoC offset %d -> NOT RESOLVABLE (%s)\\n",
+			printf("%-12s: SoC offset %d -> NOT RESOLVABLE (%s)\n",
 			       pins[i].name, pins[i].offset, g_gpio_chip_rule);
 			ok = 0;
 		} else if (g_gpio_chip_bank != pins[i].offset / GPIO_BANK_WIDTH ||
 			   g_gpio_line_offset != pins[i].offset % GPIO_BANK_WIDTH ||
 			   resolved != g_gpio_chip_base + g_gpio_line_offset) {
-			printf("%-12s: SoC offset %d -> INVALID mapping (base=%d bank=%d line=%d resolved=%d)\\n",
+			printf("%-12s: SoC offset %d -> INVALID mapping (base=%d bank=%d line=%d resolved=%d)\n",
 			       pins[i].name, pins[i].offset, g_gpio_chip_base,
 			       g_gpio_chip_bank, g_gpio_line_offset, resolved);
 			ok = 0;
 		} else {
 			for (size_t j = 0; j < i; j++) {
 				if (resolved_numbers[j] == resolved) {
-					printf("%-12s: SoC offset %d -> DUPLICATE GPIO %d\\n",
+					printf("%-12s: SoC offset %d -> DUPLICATE GPIO %d\n",
 					       pins[i].name, pins[i].offset, resolved);
 					ok = 0;
 				}
 			}
-			printf("%-12s: SoC offset %d -> bank %d, chip base %d, line %d, sysfs gpio%d [%s]\\n",
+			printf("%-12s: SoC offset %d -> bank %d, chip base %d, line %d, sysfs gpio%d [%s]\n",
 			       pins[i].name, pins[i].offset, g_gpio_chip_bank,
 			       g_gpio_chip_base, g_gpio_line_offset, resolved,
 			       g_gpio_chip_rule);
