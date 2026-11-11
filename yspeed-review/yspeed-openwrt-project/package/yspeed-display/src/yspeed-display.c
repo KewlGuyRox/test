@@ -5,8 +5,7 @@
  * Hardware facts this file depends on (verified from the vendor DTB, the
  * captured /proc snapshots and the vendor LVGL binary):
  *
- *   SPI      : MT7621 SPI0 clock/data, 40 MHz -> /dev/spidev0.1
- *   LCD CS   : GPIO6, software chip-select (SPI_NO_CS)
+ *   SPI      : hardware MT7621 SPI, CS1, 40 MHz  -> /dev/spidev0.1
  *   LCD D/C  : GPIO16   (SoC pin offset, not a sysfs number)
  *   LCD RESET: GPIO14
  *   BACKLIGHT: GPIO19
@@ -279,7 +278,7 @@ static int gpio_claim(int offset, int *number, int initial)
 	char text[32];
 	int resolved;
 
-	/* Only the four dedicated LCD signals may be exported by this process. */
+	/* Only the three dedicated LCD outputs may be exported by this process. */
 	if (!gpio_lcd_offset_allowed(offset)) {
 		fprintf(stderr, "gpio: refusing non-LCD SoC offset %d\n", offset);
 		return -1;
