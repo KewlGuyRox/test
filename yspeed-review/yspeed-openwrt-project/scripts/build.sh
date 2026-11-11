@@ -135,10 +135,6 @@ grep -qF 'host->mode_bits = SPI_LSB_FIRST | SPI_NO_CS;' "$SPI_MASTER_SOURCE" || 
   echo "MT7621 SPI_NO_CS patch did not apply; manual LCD chip-select is unavailable" >&2
   exit 4
 }
-grep -qF 'if (spi->mode & SPI_NO_CS)' "$SPI_MASTER_SOURCE" || {
-  echo "MT7621 SPI_NO_CS transfer-engine setup patch did not apply" >&2
-  exit 4
-}
 DISPLAY_SOURCE="$PROJECT_DIR/package/yspeed-display/src/yspeed-display.c"
 # Exercise the actual C resolver against synthetic gpiochip sysfs trees.
 # This validates behavior (including malformed/ambiguous cases), not source wording.

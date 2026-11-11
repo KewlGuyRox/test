@@ -11,7 +11,7 @@ native CS output while retaining SPI0 clock/data transfers.
 -	host->mode_bits = SPI_LSB_FIRST;
 +	host->mode_bits = SPI_LSB_FIRST | SPI_NO_CS;
 
-@@ -150,15 +150,28 @@ static int mt7621_spi_prepare_message(struct spi_controller *host,
+@@ -150,16 +150,31 @@ static int mt7621_spi_prepare_message(struct spi_controller *host,
  				      struct spi_message *m)
  {
  	struct mt7621_spi *rs = spi_controller_get_devdata(host);
