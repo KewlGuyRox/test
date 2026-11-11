@@ -359,23 +359,59 @@ static int spi_write_all(int fd, const uint8_t *buf, size_t len)
  * automatic CS disabled and frame each ST7789 command/data transaction with
  * this GPIO. This keeps CS asserted while D/C changes from command to data.
  */
+/* ---- panel-probe variants; defaults reproduce the daemon exactly ---- */
+static int g_dc_invert;      /* 1: command=1, data=0 */
+static int g_cs_hold;        /* 1: never deassert CS between commands */
+static int g_skip_reset;     /* 1: no RESET pulse before init */
+static int g_bl_fixed = -1;  /* >=0: drive GPIO19 to this level and leave it */
+
+static uint32_t g_spi_hz = SPI_HZ;   /* current clock, used by flush() unless set */
+
+static int spi_set_speed(int fd, uint32_t hz)
+{
+	uint32_t actual = 0;
+
+	if (ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &hz) < 0)
+		return -1;
+	if (ioctl(fd, SPI_IOC_RD_MAX_SPEED_HZ, &actual) == 0)
+		printf("  speed        : requested %u Hz, driver reports %u Hz\n",
+		       hz, actual);
+	g_spi_hz = hz;
+	return 0;
+}
+
+static int dc_write(struct display *d, int is_data)
+{
+	return gpio_set(d->dc, g_dc_invert ? !is_data : is_data);
+}
+
+static int cs_assert(struct display *d)
+{
+	return gpio_set(d->cs, 0);
+}
+
+static int cs_release(struct display *d)
+{
+	return g_cs_hold ? 0 : gpio_set(d->cs, 1);
+}
+
 static int lcd_cmd(struct display *d, uint8_t cmd, const uint8_t *data, size_t len)
 {
 	int rc = -1;
 	int saved_errno = 0;
 
-	if (gpio_set(d->cs, 0) < 0)
+	if (cs_assert(d) < 0)
 		return -1;
-	if (gpio_set(d->dc, 0) < 0 || spi_write_all(d->spi, &cmd, 1) < 0)
+	if (dc_write(d, 0) < 0 || spi_write_all(d->spi, &cmd, 1) < 0)
 		goto out;
 	if (len > 0 &&
-	    (gpio_set(d->dc, 1) < 0 || spi_write_all(d->spi, data, len) < 0))
+	    (dc_write(d, 1) < 0 || spi_write_all(d->spi, data, len) < 0))
 		goto out;
 	rc = 0;
 out:
 	if (rc < 0)
 		saved_errno = errno;
-	if (gpio_set(d->cs, 1) < 0 && rc == 0)
+	if (cs_release(d) < 0 && rc == 0)
 		return -1;
 	if (rc < 0)
 		errno = saved_errno;
@@ -417,9 +453,11 @@ static int panel_init(struct display *d, const struct config *cfg)
 	const uint8_t colmod = 0x55;
 	const uint8_t madctl = madctl_for(cfg->rotation);
 
-	gpio_set(d->backlight, 0);
-	gpio_set(d->reset, 0);
-	msleep(30);
+	gpio_set(d->backlight, g_bl_fixed >= 0 ? g_bl_fixed : 0);
+	if (!g_skip_reset) {
+		gpio_set(d->reset, 0);
+		msleep(30);
+	}
 	gpio_set(d->reset, 1);
 	msleep(150);
 
@@ -451,7 +489,7 @@ static int panel_init(struct display *d, const struct config *cfg)
 		return -1;
 
 	msleep(100);
-	return gpio_set(d->backlight, 1);
+	return gpio_set(d->backlight, g_bl_fixed >= 0 ? g_bl_fixed : 1);
 }
 
 static void pixel(struct display *d, int x, int y, uint16_t color)
@@ -534,12 +572,12 @@ static int flush(struct display *d)
 	}
 
 	/* Hold software CS low from RAMWR through the complete pixel stream. */
-	if (gpio_set(d->cs, 0) < 0 ||
-	    gpio_set(d->dc, 0) < 0 ||
+	if (cs_assert(d) < 0 ||
+	    dc_write(d, 0) < 0 ||
 	    spi_write_all(d->spi, &ramwr, 1) < 0 ||
-	    gpio_set(d->dc, 1) < 0) {
+	    dc_write(d, 1) < 0) {
 		int saved_errno = errno;
-		gpio_set(d->cs, 1);
+		cs_release(d);
 		free(frame);
 		errno = saved_errno;
 		return -1;
@@ -553,7 +591,7 @@ static int flush(struct display *d)
 			n = SPI_CHUNK;
 		tr[index].tx_buf = (uintptr_t)(frame + off);
 		tr[index].len = (uint32_t)n;
-		tr[index].speed_hz = SPI_HZ;
+		tr[index].speed_hz = g_spi_hz;
 		tr[index].bits_per_word = 8;
 		off += n;
 		index++;
@@ -562,7 +600,7 @@ static int flush(struct display *d)
 	rc = ioctl(d->spi, SPI_IOC_MESSAGE(index), tr) < 0 ? -1 : 0;
 	{
 		int saved_errno = errno;
-		if (gpio_set(d->cs, 1) < 0 && rc == 0)
+		if (cs_release(d) < 0 && rc == 0)
 			rc = -1;
 		else if (rc < 0)
 			errno = saved_errno;
@@ -1037,6 +1075,94 @@ static int hold_white(struct display *d, const struct config *cfg)
 	return 0;
 }
 
+
+/* SLPOUT, COLMOD, MADCTL, DISPON only: tests whether the longer init hurts. */
+static int panel_init_min(struct display *d, const struct config *cfg)
+{
+	const uint8_t colmod = 0x55;
+	const uint8_t madctl = madctl_for(cfg->rotation);
+
+	gpio_set(d->backlight, g_bl_fixed >= 0 ? g_bl_fixed : 0);
+	if (!g_skip_reset) {
+		gpio_set(d->reset, 0);
+		msleep(30);
+	}
+	gpio_set(d->reset, 1);
+	msleep(150);
+	if (lcd_cmd(d, 0x11, NULL, 0) < 0 ||
+	    lcd_cmd(d, 0x3a, &colmod, 1) < 0 ||
+	    lcd_cmd(d, 0x36, &madctl, 1) < 0 ||
+	    lcd_cmd(d, 0x29, NULL, 0) < 0)
+		return -1;
+	msleep(120);
+	return gpio_set(d->backlight, g_bl_fixed >= 0 ? g_bl_fixed : 1);
+}
+
+/*
+ * One boot, every remaining electrical and timing candidate. Each variant ends
+ * in a full white frame held for three seconds, so the glass names the winner:
+ * the last "PROBE n/9" line printed before the screen lights is the working
+ * configuration. Nothing here runs in the daemon path.
+ */
+static int panel_probe(struct display *d, const struct config *cfg)
+{
+	static const struct {
+		const char *label;
+		uint32_t hz;
+		int dc_inv, cs_hold, skip_reset, minimal, bl_fixed;
+	} combos[] = {
+		{ "baseline: D/C normal, CS toggles, reset, full init", 10000000, 0, 0, 0, 0, -1 },
+		{ "40 MHz", 40000000, 0, 0, 0, 0, -1 },
+		{ "1 MHz", 1000000, 0, 0, 0, 0, -1 },
+		{ "D/C inverted (command=1, data=0)", 10000000, 1, 0, 0, 0, -1 },
+		{ "CS held low across all commands", 10000000, 0, 1, 0, 0, -1 },
+		{ "no reset pulse", 10000000, 0, 0, 1, 0, -1 },
+		{ "minimal init (SLPOUT, COLMOD, MADCTL, DISPON)", 10000000, 0, 0, 0, 1, -1 },
+		{ "GPIO19 driven low throughout", 10000000, 0, 0, 0, 0, 0 },
+		{ "GPIO19 driven high throughout", 10000000, 0, 0, 0, 0, 1 },
+	};
+	const unsigned n = (unsigned)(sizeof(combos) / sizeof(combos[0]));
+
+	printf("== yspeed-display panel probe: %u variants ==\n", n);
+	for (unsigned i = 0; i < n; i++) {
+		int rc;
+
+		g_dc_invert = combos[i].dc_inv;
+		g_cs_hold = combos[i].cs_hold;
+		g_skip_reset = combos[i].skip_reset;
+		g_bl_fixed = combos[i].bl_fixed;
+
+		printf("PROBE %u/%u: %s @ %u Hz -> glass must be WHITE for 3 s\n",
+		       i + 1, n, combos[i].label, combos[i].hz);
+		fflush(stdout);
+
+		if (spi_set_speed(d->spi, combos[i].hz) < 0) {
+			printf("  speed rejected: %s\n", strerror(errno));
+			continue;
+		}
+		rc = combos[i].minimal ? panel_init_min(d, cfg) : panel_init(d, cfg);
+		if (rc < 0) {
+			printf("  init failed: %s\n", strerror(errno));
+			goto next;
+		}
+		fill(d, 0xffff);
+		if (flush(d) < 0) {
+			printf("  frame failed: %s\n", strerror(errno));
+			goto next;
+		}
+		msleep(3000);
+	next:
+		gpio_set(d->cs, 1);
+	}
+
+	g_dc_invert = 0;
+	g_cs_hold = 0;
+	g_skip_reset = 0;
+	g_bl_fixed = -1;
+	printf("probe complete; the last PROBE line before the glass lit is the winner\n");
+	return 0;
+}
+
 static int display_open(struct display *d)
 {
 	uint8_t mode = SPI_MODE_0 | SPI_NO_CS;
@@ -1126,6 +1252,9 @@ int main(int argc, char **argv)
 
 	if (mode && strcmp(mode, "--white") == 0)
 		return hold_white(&d, &cfg);
+
+	if (mode && strcmp(mode, "--panel-probe") == 0)
+		return panel_probe(&d, &cfg);
 
 	if (panel_init(&d, &cfg) < 0) {
 		fprintf(stderr, "ST7789 initialization failed\n");
