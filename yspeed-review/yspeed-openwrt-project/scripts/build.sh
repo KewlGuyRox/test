@@ -248,7 +248,7 @@ if find "$OUT" -maxdepth 1 -type f \( -name '*yspeed*sysupgrade*' -o -name '*ysp
  echo "LuCI feed: $(git -C "$SRC/feeds/luci" rev-parse HEAD)"
  echo "DTS SHA256: $(sha256sum "$PROJECT_DIR/board/mt7628an_yspeed_ys-gps-12832.dts" | awk '{print $1}')"
  echo "uImage SHA256: $(sha256sum "$WORKDIR/artifacts/yspeed-ramboot.uImage" | awk '{print $1}')"
- echo "Display: userspace SPI0 CS1 /dev/spidev0.1"
+ echo "Display: hardware SPI0 CS1 /dev/spidev0.1 at 24 MHz"
  echo "Build UTC: $(date -u +%FT%TZ)"
  echo "RAM-boot-only; do not flash."
 } > "$WORKDIR/artifacts/build-manifest.txt"

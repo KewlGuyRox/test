@@ -37,7 +37,7 @@
 #include <sys/ioctl.h>
 
 /* Printed by every mode so a running image can be identified from logread. */
-#define YSPEED_BUILD "hw-cs"
+#define YSPEED_BUILD "hw-cs-24m"
 #include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
@@ -45,7 +45,13 @@
 #define PANEL_W 240
 #define PANEL_H 320
 
-#define SPI_HZ 40000000
+/*
+ * The vendor requests 24 MHz, and its live MASTER register (0xE0078884,
+ * clk_sel 7 at sys_freq 193.333 MHz) works out to 21.48 MHz actual. That is
+ * the only rate this panel has ever been driven at successfully; 40 MHz asks
+ * for nearly double it. 24 MHz lands on the same divider (rate 9, clk_sel 7).
+ */
+#define SPI_HZ 24000000
 #define SPI_CHUNK 4096
 
 #define GPIO_CS_OFFSET 6
