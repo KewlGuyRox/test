@@ -113,10 +113,24 @@
 	};
 };
 
+/*
+ * The vendor display application exposes SPI_CS as GPIO6. Keep SPI clock/data
+ * on the hardware SPI controller, but mux CS1's pad to GPIO for explicit
+ * software chip-select timing around ST7789 command/data transactions.
+ */
+&pinctrl {
+	spi_cs1_gpio_pins: spi_cs1_gpio {
+		spi_cs1_gpio {
+			groups = "spi cs1";
+			function = "gpio";
+		};
+	};
+};
+
 &spi0 {
 	status = "okay";
 	pinctrl-names = "default";
-	pinctrl-0 = <&spi_pins>, <&spi_cs1_pins>;
+	pinctrl-0 = <&spi_pins>, <&spi_cs1_gpio_pins>;
 
 	flash@0 {
 		compatible = "jedec,spi-nor";

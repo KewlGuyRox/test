@@ -7,12 +7,16 @@ The vendor firmware confirms the application interface is `/dev/spidev0.1`;
 the old `wealth,sh1106` I2C node is unrelated/stale. The current project removes
 the FBTFT/framebuffer binding and uses:
 
-- SPI0 with native CS1 pinmux at up to 40 MHz.
+- SPI0 clock/data at up to 40 MHz; GPIO6 is muxed from the SPI-CS1 pad to GPIO
+  and driven as an explicit active-low software chip-select. The spidev device
+  remains /dev/spidev0.1, configured with SPI_NO_CS.
 - A YSPEED-specific `yspeed,st7789-spidev` DT compatible, added to Linux 6.12's
   spidev OF match table during the build. A generic `linux,spidev` compatible
   is not accepted by modern Linux.
 - `CONFIG_SPI_SPIDEV=y` and `CONFIG_GPIO_SYSFS=y`.
-- GPIO offsets 16 (D/C), 14 (reset), and 19 (backlight), exported at runtime.
+- GPIO offsets 6 (SPI CS), 16 (D/C), 14 (reset), and 19 (backlight), exported
+  at runtime. The renderer asserts GPIO6 across each command/data transaction
+  and across each complete framebuffer transfer.
 - An English-only userspace ST7789 renderer. It shows system time, eth0.2
   address, GNSS status, receiver UTC, and Chrony status. Keys remain on the
   gpio-keys/evdev path.

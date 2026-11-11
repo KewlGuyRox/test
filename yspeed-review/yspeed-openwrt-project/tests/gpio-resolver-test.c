@@ -68,6 +68,7 @@ int main(void)
 	snprintf(root, sizeof(root), "%s/vendor", tmp);
 	fixture(root);
 	chip("gpiochip576", 512, 32, "10000600.gpio-bank0\n", 0);
+	check("vendor SPI CS maps to 518", gpio_chip_base_for(6) == 518);
 	check("vendor reset maps to 526", gpio_chip_base_for(14) == 526);
 	check("vendor D/C maps to 528", gpio_chip_base_for(16) == 528);
 	check("vendor backlight maps to 531", gpio_chip_base_for(19) == 531);
@@ -76,6 +77,7 @@ int main(void)
 	snprintf(root, sizeof(root), "%s/mainline", tmp);
 	fixture(root);
 	chip("gpiochip0", 0, 32, "10000600.gpio-bank0\n", 0);
+	check("mainline SPI CS maps to 6", gpio_chip_base_for(6) == 6);
 	check("mainline reset maps to 14", gpio_chip_base_for(14) == 14);
 	check("mainline D/C maps to 16", gpio_chip_base_for(16) == 16);
 	check("mainline backlight maps to 19", gpio_chip_base_for(19) == 19);
@@ -107,8 +109,9 @@ int main(void)
 	check("unsupported fourth bank fails closed", gpio_chip_base_for(96) < 0);
 
 	check("only LCD offsets are permitted",
-	      gpio_lcd_offset_allowed(14) && gpio_lcd_offset_allowed(16) &&
-	      gpio_lcd_offset_allowed(19) && !gpio_lcd_offset_allowed(18) &&
+	      gpio_lcd_offset_allowed(6) && gpio_lcd_offset_allowed(14) &&
+	      gpio_lcd_offset_allowed(16) && gpio_lcd_offset_allowed(19) &&
+	      !gpio_lcd_offset_allowed(18) &&
 	      !gpio_lcd_offset_allowed(23) && !gpio_lcd_offset_allowed(26) &&
 	      !gpio_lcd_offset_allowed(11) && !gpio_lcd_offset_allowed(38) &&
 	      !gpio_lcd_offset_allowed(44));

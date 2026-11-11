@@ -45,6 +45,7 @@
 #define SPI_HZ 40000000
 #define SPI_CHUNK 4096
 
+#define GPIO_CS_OFFSET 6
 #define GPIO_DC_OFFSET 16
 #define GPIO_RESET_OFFSET 14
 #define GPIO_BACKLIGHT_OFFSET 19
@@ -63,6 +64,7 @@ static int g_sat_offset;
 
 struct display {
 	int spi;
+	int cs;
 	int dc;
 	int reset;
 	int backlight;
@@ -266,8 +268,8 @@ static int gpio_chip_base_for(int offset)
 
 static int gpio_lcd_offset_allowed(int offset)
 {
-	return offset == GPIO_DC_OFFSET || offset == GPIO_RESET_OFFSET ||
-	       offset == GPIO_BACKLIGHT_OFFSET;
+	return offset == GPIO_CS_OFFSET || offset == GPIO_DC_OFFSET ||
+	       offset == GPIO_RESET_OFFSET || offset == GPIO_BACKLIGHT_OFFSET;
 }
 
 static int gpio_claim(int offset, int *number, int initial)
@@ -352,17 +354,32 @@ static int spi_write_all(int fd, const uint8_t *buf, size_t len)
 	return 0;
 }
 
+/*
+ * GPIO6 is the board's documented LCD SPI_CS line. Keep the controller's
+ * automatic CS disabled and frame each ST7789 command/data transaction with
+ * this GPIO. This keeps CS asserted while D/C changes from command to data.
+ */
 static int lcd_cmd(struct display *d, uint8_t cmd, const uint8_t *data, size_t len)
 {
-	if (gpio_set(d->dc, 0) < 0)
+	int rc = -1;
+	int saved_errno = 0;
+
+	if (gpio_set(d->cs, 0) < 0)
 		return -1;
-	if (spi_write_all(d->spi, &cmd, 1) < 0)
+	if (gpio_set(d->dc, 0) < 0 || spi_write_all(d->spi, &cmd, 1) < 0)
+		goto out;
+	if (len > 0 &&
+	    (gpio_set(d->dc, 1) < 0 || spi_write_all(d->spi, data, len) < 0))
+		goto out;
+	rc = 0;
+out:
+	if (rc < 0)
+		saved_errno = errno;
+	if (gpio_set(d->cs, 1) < 0 && rc == 0)
 		return -1;
-	if (len == 0)
-		return 0;
-	if (gpio_set(d->dc, 1) < 0)
-		return -1;
-	return spi_write_all(d->spi, data, len);
+	if (rc < 0)
+		errno = saved_errno;
+	return rc;
 }
 
 /* ST7789 MADCTL for each rotation, with the BGR bit set as the vendor panel. */
@@ -493,6 +510,7 @@ static int flush(struct display *d)
 				  (uint8_t)(PANEL_W - 1) };
 	const uint8_t rows[4] = { 0, 0, (uint8_t)((PANEL_H - 1) >> 8),
 				  (uint8_t)(PANEL_H - 1) };
+	const uint8_t ramwr = 0x2c;
 	const size_t total = (size_t)PANEL_W * PANEL_H;
 	struct spi_ioc_transfer tr[40];
 	uint8_t *frame;
@@ -510,10 +528,20 @@ static int flush(struct display *d)
 	}
 
 	if (lcd_cmd(d, 0x2a, cols, sizeof(cols)) < 0 ||
-	    lcd_cmd(d, 0x2b, rows, sizeof(rows)) < 0 ||
-	    lcd_cmd(d, 0x2c, NULL, 0) < 0 ||      /* RAMWR */
-	    gpio_set(d->dc, 1) < 0) {
+	    lcd_cmd(d, 0x2b, rows, sizeof(rows)) < 0) {
 		free(frame);
+		return -1;
+	}
+
+	/* Hold software CS low from RAMWR through the complete pixel stream. */
+	if (gpio_set(d->cs, 0) < 0 ||
+	    gpio_set(d->dc, 0) < 0 ||
+	    spi_write_all(d->spi, &ramwr, 1) < 0 ||
+	    gpio_set(d->dc, 1) < 0) {
+		int saved_errno = errno;
+		gpio_set(d->cs, 1);
+		free(frame);
+		errno = saved_errno;
 		return -1;
 	}
 
@@ -532,6 +560,13 @@ static int flush(struct display *d)
 	}
 
 	rc = ioctl(d->spi, SPI_IOC_MESSAGE(index), tr) < 0 ? -1 : 0;
+	{
+		int saved_errno = errno;
+		if (gpio_set(d->cs, 1) < 0 && rc == 0)
+			rc = -1;
+		else if (rc < 0)
+			errno = saved_errno;
+	}
 	free(frame);
 	return rc;
 }
@@ -881,6 +916,7 @@ static int selftest(void)
 	}
 
 	struct { const char *name; int offset; } pins[] = {
+		{ "LCD_SPI_CS", GPIO_CS_OFFSET },
 		{ "LCD_RESET", GPIO_RESET_OFFSET },
 		{ "LCD_DC", GPIO_DC_OFFSET },
 		{ "LCD_BACKLIGHT", GPIO_BACKLIGHT_OFFSET },
@@ -966,7 +1002,8 @@ static int color_cycle(struct display *d, const struct config *cfg)
 
 static int display_open(struct display *d)
 {
-	uint8_t mode = SPI_MODE_0;
+	uint8_t mode = SPI_MODE_0 | SPI_NO_CS;
+	uint8_t applied_mode = 0;
 	uint8_t bits = 8;
 	uint32_t speed = SPI_HZ;
 
@@ -978,18 +1015,29 @@ static int display_open(struct display *d)
 
 	if (ioctl(d->spi, SPI_IOC_WR_MODE, &mode) < 0 ||
 	    ioctl(d->spi, SPI_IOC_WR_BITS_PER_WORD, &bits) < 0 ||
-	    ioctl(d->spi, SPI_IOC_WR_MAX_SPEED_HZ, &speed) < 0) {
+	    ioctl(d->spi, SPI_IOC_WR_MAX_SPEED_HZ, &speed) < 0 ||
+	    ioctl(d->spi, SPI_IOC_RD_MODE, &applied_mode) < 0) {
 		fprintf(stderr, "configure SPI: %s\n", strerror(errno));
 		close(d->spi);
 		d->spi = -1;
 		return -1;
 	}
+	if (!(applied_mode & SPI_NO_CS)) {
+		fprintf(stderr, "SPI controller did not retain SPI_NO_CS; refusing unsafe CS configuration\n");
+		close(d->spi);
+		d->spi = -1;
+		errno = EOPNOTSUPP;
+		return -1;
+	}
+	fprintf(stderr, "SPI: mode 0, %u bits, %u Hz, software CS on GPIO offset %d\n",
+		bits, speed, GPIO_CS_OFFSET);
 	return 0;
 }
 
 static int gpio_open(struct display *d)
 {
-	if (gpio_claim(GPIO_DC_OFFSET, &d->dc, 0) < 0 ||
+	if (gpio_claim(GPIO_CS_OFFSET, &d->cs, 1) < 0 ||
+	    gpio_claim(GPIO_DC_OFFSET, &d->dc, 0) < 0 ||
 	    gpio_claim(GPIO_RESET_OFFSET, &d->reset, 1) < 0 ||
 	    gpio_claim(GPIO_BACKLIGHT_OFFSET, &d->backlight, 0) < 0) {
 		fprintf(stderr, "unable to claim ST7789 GPIO lines\n");
@@ -1001,7 +1049,7 @@ static int gpio_open(struct display *d)
 int main(int argc, char **argv)
 {
 	/* static: the struct carries a 150 KiB framebuffer, too large for the stack */
-	static struct display d = { .spi = -1, .dc = -1, .reset = -1, .backlight = -1 };
+	static struct display d = { .spi = -1, .cs = -1, .dc = -1, .reset = -1, .backlight = -1 };
 	struct config cfg;
 	const char *mode = argc > 1 ? argv[1] : NULL;
 	struct sigaction sa;
@@ -1147,6 +1195,7 @@ int main(int argc, char **argv)
 	}
 
 	gpio_set(d.backlight, 0);
+	gpio_set(d.cs, 1);
 	gpio_set(d.reset, 0);
 	if (d.spi >= 0)
 		close(d.spi);

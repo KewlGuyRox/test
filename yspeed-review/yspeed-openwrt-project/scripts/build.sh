@@ -65,6 +65,7 @@ sh "$PROJECT_DIR/scripts/disable-wireless-defaults.sh" "$SRC"
 # "make target/linux/prepare", is reviewable in git, and is not a hidden
 # in-place sed. Applied with -p1 from the kernel source root.
 mkdir -p "$SRC/target/linux/ramips/patches-6.12"
+cp "$PROJECT_DIR/patches/998-mt7621-spi-no-cs.patch" "$SRC/target/linux/ramips/patches-6.12/"
 cp "$PROJECT_DIR/patches/999-spidev-yspeed-match.patch" "$SRC/target/linux/ramips/patches-6.12/"
 
 # Native MT7628 SPI master, spidev, and legacy GPIO sysfs.
@@ -126,6 +127,12 @@ SPIDEV_SOURCE="$(find "$SRC/build_dir" -type f -path '*/drivers/spi/spidev.c' -p
 # The patch is applied by target/linux/prepare from patches-6.12/. Assert it.
 grep -qF 'yspeed,st7789-spidev' "$SPIDEV_SOURCE" || {
   echo "spidev.c patch did not apply; check patches/999-spidev-yspeed-match.patch context" >&2
+  exit 4
+}
+SPI_MASTER_SOURCE="$(find "$SRC/build_dir" -type f -path '*/drivers/spi/spi-mt7621.c' -print -quit)"
+[[ -n "$SPI_MASTER_SOURCE" && -f "$SPI_MASTER_SOURCE" ]] || { echo "MT7621 SPI master source not found" >&2; exit 4; }
+grep -qF 'host->mode_bits = SPI_LSB_FIRST | SPI_NO_CS;' "$SPI_MASTER_SOURCE" || {
+  echo "MT7621 SPI_NO_CS patch did not apply; manual LCD chip-select is unavailable" >&2
   exit 4
 }
 DISPLAY_SOURCE="$PROJECT_DIR/package/yspeed-display/src/yspeed-display.c"
