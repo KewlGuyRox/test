@@ -2,12 +2,12 @@ name: YSPEED OpenWrt RAM-boot build
 
 on:
   workflow_dispatch:
+  # Build on every push to main. The path filter that used to live here was
+  # satisfied by the commit that produced no run at all, and a silently skipped
+  # build costs more than a wasted one.
   push:
     branches:
       - main
-    paths:
-      - '.github/workflows/yspeed-ramboot-build.yml'
-      - 'yspeed-review/yspeed-openwrt-project/**'
 
 permissions:
   contents: read

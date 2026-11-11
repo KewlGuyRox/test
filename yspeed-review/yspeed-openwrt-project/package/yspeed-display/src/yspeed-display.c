@@ -35,6 +35,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+
+/* Printed by every mode so a running image can be identified from logread. */
+#define YSPEED_BUILD "probe-3"
 #include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
@@ -364,6 +367,8 @@ static int g_dc_invert;      /* 1: command=1, data=0 */
 static int g_cs_hold;        /* 1: never deassert CS between commands */
 static int g_skip_reset;     /* 1: no RESET pulse before init */
 static int g_bl_fixed = -1;  /* >=0: drive GPIO19 to this level and leave it */
+static int g_swap_dc_cs;     /* 1: pad 16 carries CS and pad 6 carries D/C */
+static int g_reset_mode;     /* 0 normal, 2 inverted, 3 held low, 4 held high */
 
 static uint32_t g_spi_hz = SPI_HZ;   /* current clock, used by flush() unless set */
 
@@ -382,17 +387,21 @@ static int spi_set_speed(int fd, uint32_t hz)
 
 static int dc_write(struct display *d, int is_data)
 {
-	return gpio_set(d->dc, g_dc_invert ? !is_data : is_data);
+	int line = g_swap_dc_cs ? d->cs : d->dc;
+
+	return gpio_set(line, g_dc_invert ? !is_data : is_data);
 }
 
 static int cs_assert(struct display *d)
 {
-	return gpio_set(d->cs, 0);
+	return gpio_set(g_swap_dc_cs ? d->dc : d->cs, 0);
 }
 
 static int cs_release(struct display *d)
 {
-	return g_cs_hold ? 0 : gpio_set(d->cs, 1);
+	if (g_cs_hold)
+		return 0;
+	return gpio_set(g_swap_dc_cs ? d->dc : d->cs, 1);
 }
 
 static int lcd_cmd(struct display *d, uint8_t cmd, const uint8_t *data, size_t len)
@@ -454,11 +463,26 @@ static int panel_init(struct display *d, const struct config *cfg)
 	const uint8_t madctl = madctl_for(cfg->rotation);
 
 	gpio_set(d->backlight, g_bl_fixed >= 0 ? g_bl_fixed : 0);
-	if (!g_skip_reset) {
-		gpio_set(d->reset, 0);
+	switch (g_reset_mode) {
+	case 2:                       /* inverted pulse: assert high, release low */
+		gpio_set(d->reset, 1);
 		msleep(30);
+		gpio_set(d->reset, 0);
+		break;
+	case 3:                       /* held low for the whole init */
+		gpio_set(d->reset, 0);
+		break;
+	case 4:                       /* held high for the whole init */
+		gpio_set(d->reset, 1);
+		break;
+	default:
+		if (!g_skip_reset) {
+			gpio_set(d->reset, 0);
+			msleep(30);
+		}
+		gpio_set(d->reset, 1);
+		break;
 	}
-	gpio_set(d->reset, 1);
 	msleep(150);
 
 	if (lcd_cmd(d, 0x01, NULL, 0) < 0)  /* SWRESET */
@@ -908,6 +932,7 @@ static int selftest(void)
 	int ok = 1;
 
 	printf("== yspeed-display selftest ==\n");
+	printf("build       : %s\n", YSPEED_BUILD);
 
 	if (uname(&u) == 0)
 		printf("kernel      : %s %s\n", u.sysname, u.release);
@@ -1104,26 +1129,75 @@ static int panel_init_min(struct display *d, const struct config *cfg)
  * the last "PROBE n/9" line printed before the screen lights is the working
  * configuration. Nothing here runs in the daemon path.
  */
+/*
+ * RDDID (0x04) is the only command that makes the panel talk back, and the
+ * controller's read path is the same one the boot flash uses. A real reply
+ * proves clock, MOSI, CS, D/C and MISO all work and that the panel is alive;
+ * silence is itself informative.
+ */
+static int panel_id(struct display *d, uint8_t *id, size_t n)
+{
+	struct spi_ioc_transfer tr = { 0 };
+	uint8_t cmd = 0x04;   /* RDDID */
+	int rc = -1;
+
+	memset(id, 0, n);
+	if (cs_assert(d) < 0)
+		return -1;
+	if (dc_write(d, 0) < 0 || spi_write_all(d->spi, &cmd, 1) < 0)
+		goto out;
+	if (dc_write(d, 1) < 0)
+		goto out;
+	tr.rx_buf = (unsigned long)id;
+	tr.len = n;
+	tr.speed_hz = g_spi_hz;
+	tr.bits_per_word = 8;
+	if (ioctl(d->spi, SPI_IOC_MESSAGE(1), &tr) < 0)
+		goto out;
+	rc = 0;
+out:
+	cs_release(d);
+	return rc;
+}
+
 static int panel_probe(struct display *d, const struct config *cfg)
 {
 	static const struct {
 		const char *label;
 		uint32_t hz;
-		int dc_inv, cs_hold, skip_reset, minimal, bl_fixed;
+		int dc_inv, cs_hold, reset_mode, skip_reset, minimal, bl_fixed, swap;
 	} combos[] = {
-		{ "baseline: D/C normal, CS toggles, reset, full init", 10000000, 0, 0, 0, 0, -1 },
-		{ "40 MHz", 40000000, 0, 0, 0, 0, -1 },
-		{ "1 MHz", 1000000, 0, 0, 0, 0, -1 },
-		{ "D/C inverted (command=1, data=0)", 10000000, 1, 0, 0, 0, -1 },
-		{ "CS held low across all commands", 10000000, 0, 1, 0, 0, -1 },
-		{ "no reset pulse", 10000000, 0, 0, 1, 0, -1 },
-		{ "minimal init (SLPOUT, COLMOD, MADCTL, DISPON)", 10000000, 0, 0, 0, 1, -1 },
-		{ "GPIO19 driven low throughout", 10000000, 0, 0, 0, 0, 0 },
-		{ "GPIO19 driven high throughout", 10000000, 0, 0, 0, 0, 1 },
+		{ "baseline: D/C normal, CS toggles, reset, full init", 10000000, 0, 0, 0, 0, 0, -1, 0 },
+		{ "40 MHz", 40000000, 0, 0, 0, 0, 0, -1, 0 },
+		{ "100 kHz slow clock", 100000, 0, 0, 0, 0, 0, -1, 0 },
+		{ "D/C inverted (command=1, data=0)", 10000000, 1, 0, 0, 0, 0, -1, 0 },
+		{ "D/C and CS swapped (pad16=CS, pad6=D/C)", 10000000, 0, 0, 0, 0, 0, -1, 1 },
+		{ "CS held low across all commands", 10000000, 0, 1, 0, 0, 0, -1, 0 },
+		{ "reset pulse inverted (assert high)", 10000000, 0, 0, 2, 0, 0, -1, 0 },
+		{ "no reset pulse", 10000000, 0, 0, 0, 1, 0, -1, 0 },
+		{ "GPIO14 held low (power-enable shape)", 10000000, 0, 0, 3, 0, 0, -1, 0 },
+		{ "GPIO14 held high", 10000000, 0, 0, 4, 0, 0, -1, 0 },
+		{ "GPIO19 driven low throughout", 10000000, 0, 0, 0, 0, 0, 0, 0 },
+		{ "GPIO19 driven high throughout", 10000000, 0, 0, 0, 0, 0, 1, 0 },
+		{ "minimal init (SLPOUT, COLMOD, MADCTL, DISPON)", 10000000, 0, 0, 0, 0, 1, -1, 0 },
 	};
 	const unsigned n = (unsigned)(sizeof(combos) / sizeof(combos[0]));
 
-	printf("== yspeed-display panel probe: %u variants ==\n", n);
+	printf("== yspeed-display %s panel probe: %u variants ==\n", YSPEED_BUILD, n);
+	{
+		uint8_t id[4];
+
+		if (panel_id(d, id, sizeof(id)) == 0)
+			printf("RDDID before init : %02x %02x %02x %02x%s\n",
+			       id[0], id[1], id[2], id[3],
+			       (id[0] == 0xff && id[1] == 0xff) ?
+			       "  (all 0xff - nothing driving MISO)" :
+			       (id[0] == 0 && id[1] == 0 && id[2] == 0 && id[3] == 0) ?
+			       "  (all zero - no answer, or MISO not wired)" : "");
+		else
+			printf("RDDID before init : read failed: %s\n", strerror(errno));
+		fflush(stdout);
+	}
 	for (unsigned i = 0; i < n; i++) {
 		int rc;
 		struct timespec t0, t1;
@@ -1132,6 +1206,8 @@ static int panel_probe(struct display *d, const struct config *cfg)
 		g_dc_invert = combos[i].dc_inv;
 		g_cs_hold = combos[i].cs_hold;
 		g_skip_reset = combos[i].skip_reset;
+		g_reset_mode = combos[i].reset_mode;
+		g_swap_dc_cs = combos[i].swap;
 		g_bl_fixed = combos[i].bl_fixed;
 
 		printf("PROBE %u/%u: %s @ %u Hz -> glass must be WHITE for 3 s\n",
@@ -1175,6 +1251,8 @@ static int panel_probe(struct display *d, const struct config *cfg)
 	g_dc_invert = 0;
 	g_cs_hold = 0;
 	g_skip_reset = 0;
+	g_reset_mode = 0;
+	g_swap_dc_cs = 0;
 	g_bl_fixed = -1;
 	printf("probe complete; the last PROBE line before the glass lit is the winner\n");
 	return 0;
@@ -1187,7 +1265,7 @@ static int display_open(struct display *d)
 	uint8_t bits = 8;
 	uint32_t speed = SPI_HZ;
 
-	d->spi = open("/dev/spidev0.1", O_WRONLY);
+	d->spi = open("/dev/spidev0.1", O_RDWR);   /* RDWR so RDDID can answer */
 	if (d->spi < 0) {
 		fprintf(stderr, "open /dev/spidev0.1: %s\n", strerror(errno));
 		return -1;
@@ -1249,6 +1327,21 @@ int main(int argc, char **argv)
 
 	config_load(&cfg);
 
+	/*
+	 * An unknown option used to fall through and start the daemon, which made
+	 * an old image look like a new one whenever a diagnostic flag was missing.
+	 */
+	if (mode && mode[0] == '-' &&
+	    strcmp(mode, "--selftest") != 0 && strcmp(mode, "--test") != 0 &&
+	    strcmp(mode, "--white") != 0 && strcmp(mode, "--panel-probe") != 0 &&
+	    strcmp(mode, "--panel-id") != 0) {
+		fprintf(stderr, "yspeed-display %s: unknown option '%s'\n"
+			"options: --selftest --test --white --panel-probe --panel-id\n",
+			YSPEED_BUILD, mode);
+		return 2;
+	}
+	fprintf(stderr, "yspeed-display %s starting\n", YSPEED_BUILD);
+
 	if (mode && (strcmp(mode, "--selftest") == 0 ||
 		     strcmp(mode, "--test") == 0)) {
 		int rc = selftest();
@@ -1269,6 +1362,17 @@ int main(int argc, char **argv)
 
 	if (mode && strcmp(mode, "--white") == 0)
 		return hold_white(&d, &cfg);
+
+	if (mode && strcmp(mode, "--panel-id") == 0) {
+		uint8_t id[4];
+
+		if (panel_id(&d, id, sizeof(id)) < 0) {
+			fprintf(stderr, "RDDID read failed: %s\n", strerror(errno));
+			return 1;
+		}
+		printf("RDDID: %02x %02x %02x %02x\n", id[0], id[1], id[2], id[3]);
+		return 0;
+	}
 
 	if (mode && strcmp(mode, "--panel-probe") == 0)
 		return panel_probe(&d, &cfg);
