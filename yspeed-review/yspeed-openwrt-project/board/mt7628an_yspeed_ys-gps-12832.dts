@@ -114,15 +114,18 @@
 };
 
 /*
- * The vendor display application exposes SPI_CS as GPIO6. Keep SPI clock/data
- * on the hardware SPI controller, but mux CS1's pad to GPIO for explicit
- * software chip-select timing around ST7789 command/data transactions.
+ * Chip select: the vendor device tree muxes this pad to the SPI controller's
+ * hardware CS1, and its userspace GPIO 486 export simply fails - so every
+ * frame the vendor firmware ever drew used hardware CS1. Earlier builds muxed
+ * the pad to GPIO *and* set SPI_NO_CS in userspace, so no chip select was ever
+ * asserted and the panel never latched a byte. That is why both "CS
+ * architectures" looked identically dark. Match the vendor exactly.
  */
 &pinctrl {
-	spi_cs1_gpio_pins: spi_cs1_gpio {
-		spi_cs1_gpio {
+	spi_cs1_hw_pins: spi_cs1_hw {
+		spi_cs1_hw {
 			groups = "spi cs1";
-			function = "gpio";
+			function = "spi cs1";
 		};
 	};
 };
@@ -130,7 +133,8 @@
 &spi0 {
 	status = "okay";
 	pinctrl-names = "default";
-	pinctrl-0 = <&spi_pins>, <&spi_cs1_gpio_pins>;
+	num-cs = <2>;
+	pinctrl-0 = <&spi_pins>, <&spi_cs1_hw_pins>;
 
 	flash@0 {
 		compatible = "jedec,spi-nor";

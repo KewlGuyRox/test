@@ -37,7 +37,7 @@
 #include <sys/ioctl.h>
 
 /* Printed by every mode so a running image can be identified from logread. */
-#define YSPEED_BUILD "probe-3"
+#define YSPEED_BUILD "hw-cs"
 #include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
@@ -365,6 +365,7 @@ static int spi_write_all(int fd, const uint8_t *buf, size_t len)
 /* ---- panel-probe variants; defaults reproduce the daemon exactly ---- */
 static int g_dc_invert;      /* 1: command=1, data=0 */
 static int g_cs_hold;        /* 1: never deassert CS between commands */
+static int g_hw_cs = 1;      /* 1: hardware CS1 (vendor), 0: software GPIO CS */
 static int g_skip_reset;     /* 1: no RESET pulse before init */
 static int g_bl_fixed = -1;  /* >=0: drive GPIO19 to this level and leave it */
 static int g_swap_dc_cs;     /* 1: pad 16 carries CS and pad 6 carries D/C */
@@ -394,12 +395,14 @@ static int dc_write(struct display *d, int is_data)
 
 static int cs_assert(struct display *d)
 {
+	if (g_hw_cs)
+		return 0;
 	return gpio_set(g_swap_dc_cs ? d->dc : d->cs, 0);
 }
 
 static int cs_release(struct display *d)
 {
-	if (g_cs_hold)
+	if (g_hw_cs || g_cs_hold)
 		return 0;
 	return gpio_set(g_swap_dc_cs ? d->dc : d->cs, 1);
 }
@@ -1260,7 +1263,7 @@ static int panel_probe(struct display *d, const struct config *cfg)
 
 static int display_open(struct display *d)
 {
-	uint8_t mode = SPI_MODE_0 | SPI_NO_CS;
+	uint8_t mode = SPI_MODE_0 | (g_hw_cs ? 0 : SPI_NO_CS);
 	uint8_t applied_mode = 0;
 	uint8_t bits = 8;
 	uint32_t speed = SPI_HZ;
@@ -1280,21 +1283,25 @@ static int display_open(struct display *d)
 		d->spi = -1;
 		return -1;
 	}
-	if (!(applied_mode & SPI_NO_CS)) {
+	if (!g_hw_cs && !(applied_mode & SPI_NO_CS)) {
 		fprintf(stderr, "SPI controller did not retain SPI_NO_CS; refusing unsafe CS configuration\n");
 		close(d->spi);
 		d->spi = -1;
 		errno = EOPNOTSUPP;
 		return -1;
 	}
-	fprintf(stderr, "SPI: mode 0, %u bits, %u Hz, software CS on GPIO offset %d\n",
-		bits, speed, GPIO_CS_OFFSET);
+	if (g_hw_cs)
+		fprintf(stderr, "SPI: mode 0, %u bits, %u Hz, hardware CS1 (vendor configuration)\n",
+			bits, speed);
+	else
+		fprintf(stderr, "SPI: mode 0, %u bits, %u Hz, software CS on GPIO offset %d\n",
+			bits, speed, GPIO_CS_OFFSET);
 	return 0;
 }
 
 static int gpio_open(struct display *d)
 {
-	if (gpio_claim(GPIO_CS_OFFSET, &d->cs, 1) < 0 ||
+	if ((!g_hw_cs && gpio_claim(GPIO_CS_OFFSET, &d->cs, 1) < 0) ||
 	    gpio_claim(GPIO_DC_OFFSET, &d->dc, 0) < 0 ||
 	    gpio_claim(GPIO_RESET_OFFSET, &d->reset, 1) < 0 ||
 	    gpio_claim(GPIO_BACKLIGHT_OFFSET, &d->backlight, 0) < 0) {
@@ -1309,7 +1316,24 @@ int main(int argc, char **argv)
 	/* static: the struct carries a 150 KiB framebuffer, too large for the stack */
 	static struct display d = { .spi = -1, .cs = -1, .dc = -1, .reset = -1, .backlight = -1 };
 	struct config cfg;
-	const char *mode = argc > 1 ? argv[1] : NULL;
+	const char *mode = NULL;
+	int argi;
+
+	for (argi = 1; argi < argc; argi++) {
+		if (strcmp(argv[argi], "--hw-cs") == 0) {
+			g_hw_cs = 1;
+			continue;
+		}
+		if (strcmp(argv[argi], "--sw-cs") == 0) {
+			g_hw_cs = 0;
+			continue;
+		}
+		if (mode != NULL) {
+			fprintf(stderr, "yspeed-display: unexpected argument '%s'\n", argv[argi]);
+			return 2;
+		}
+		mode = argv[argi];
+	}
 	struct sigaction sa;
 	int keys;
 	int page = 0;
@@ -1336,7 +1360,7 @@ int main(int argc, char **argv)
 	    strcmp(mode, "--white") != 0 && strcmp(mode, "--panel-probe") != 0 &&
 	    strcmp(mode, "--panel-id") != 0) {
 		fprintf(stderr, "yspeed-display %s: unknown option '%s'\n"
-			"options: --selftest --test --white --panel-probe --panel-id\n",
+			"options: --selftest --test --white --panel-probe --panel-id [--hw-cs|--sw-cs]\n",
 			YSPEED_BUILD, mode);
 		return 2;
 	}
@@ -1497,7 +1521,8 @@ int main(int argc, char **argv)
 	}
 
 	gpio_set(d.backlight, 0);
-	gpio_set(d.cs, 1);
+	if (d.cs >= 0)
+		gpio_set(d.cs, 1);
 	gpio_set(d.reset, 0);
 	if (d.spi >= 0)
 		close(d.spi);
