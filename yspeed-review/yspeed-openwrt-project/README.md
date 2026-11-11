@@ -71,3 +71,13 @@ visible pixels, button input, RTC, serial GNSS data, and PPS electrical
 activity. No satellite fix is expected until the antenna is connected.
 
 For static addressing, use LuCI Network → Interfaces → WAN and select Static, then enter the rack network address, mask, gateway and DNS. No flash writes are authorized by this project.
+
+
+## Panel test modes in the diagnostic image
+
+`yspeed-display --white` fills the panel white and holds it until Ctrl-C, and
+`--test` now ends holding a white frame for 15 s instead of leaving the screen
+black. The daemon also paints one white frame at every start, before the
+dashboard, so a power-on check needs no commands at all. A dark glass during any
+of those holds means the bytes are not reaching the controller; a white glass
+means the SPI path is good and the fault is in what the dashboard draws.

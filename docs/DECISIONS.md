@@ -175,3 +175,20 @@ The rule is now stated at both call sites with a "never reintroduce
 resolved + offset" comment. If the function is ever refactored to return a base,
 both call sites and the `--selftest` printer must change together — and
 `--selftest` must show 526 / 528 / 531 for reset / D/C / backlight.
+
+## 13. The 998 patch carries only the `mode_bits` line
+
+`patches/998-mt7621-spi-no-cs.patch` briefly carried a second hunk that repeated
+the `MASTER_RS_SLAVE_SEL`, `MASTER_MORE_BUFMODE` and `MASTER_FULL_DUPLEX`
+programming inside `mt7621_spi_prepare_message()`, on the assumption that
+`SPI_NO_CS` makes the core skip the controller's chip-select callback.
+
+It does not skip it. In `spi_set_cs()`, `SPI_NO_CS` is honoured only inside the
+`spi_is_csgpiod()` branch; for a native chip select the `controller->set_cs`
+callback runs unconditionally, so `mt7621_spi_set_native_cs()` — the function
+that programs exactly those bits — still executes. The hunk was redundant, and
+its context no longer matched `drivers/spi/spi-mt7621.c` in Linux 6.12.112, so
+the patch was rejected and no image could be built.
+
+Removed. The one-line `mode_bits` change applies with an offset and is the part
+that makes `SPI_IOC_WR_MODE` accept `SPI_NO_CS` at all.

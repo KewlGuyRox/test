@@ -975,9 +975,15 @@ static int selftest(void)
 
 static int color_cycle(struct display *d, const struct config *cfg)
 {
+	/*
+	 * WHITE is last and held. The older order ended on BLACK, which looks
+	 * exactly like a dead panel once the command returns: a working glass and
+	 * a broken one printed the same thing. A full white frame cannot be
+	 * confused with either a dark panel or a timed-out backlight.
+	 */
 	static const struct { const char *name; uint16_t color; } steps[] = {
 		{ "RED", 0xf800 }, { "GREEN", 0x07e0 }, { "BLUE", 0x001f },
-		{ "WHITE", 0xffff }, { "BLACK", 0x0000 },
+		{ "BLACK", 0x0000 }, { "WHITE", 0xffff },
 	};
 
 	if (panel_init(d, cfg) < 0) {
@@ -993,10 +999,41 @@ static int color_cycle(struct display *d, const struct config *cfg)
 			fprintf(stderr, "flush failed: %s\n", strerror(errno));
 			return 1;
 		}
-		msleep(700);
+		msleep(1200);
 	}
 
+	/*
+	 * Hold the final white frame long enough to be seen across a bench. A dark
+	 * glass at this point means the bytes are not reaching the controller: the
+	 * framebuffer and the GPIO mapping are already proven.
+	 */
+	printf("panel should now be solid WHITE for 15 s - look at it\n");
+	fflush(stdout);
+	msleep(15000);
 	printf("selftest complete\n");
+	return 0;
+}
+
+/*
+ * Hold a full white frame until SIGTERM: the only question the bench can
+ * answer is whether the glass lights up at all, and this state cannot be
+ * mistaken for a blanked backlight or a redraw timeout.
+ */
+static int hold_white(struct display *d, const struct config *cfg)
+{
+	if (panel_init(d, cfg) < 0) {
+		fprintf(stderr, "panel init failed: %s\n", strerror(errno));
+		return 1;
+	}
+	fill(d, 0xffff);
+	if (flush(d) < 0) {
+		fprintf(stderr, "flush failed: %s\n", strerror(errno));
+		return 1;
+	}
+	printf("panel filled white and held; Ctrl-C to stop\n");
+	fflush(stdout);
+	while (g_running)
+		msleep(500);
 	return 0;
 }
 
@@ -1087,10 +1124,25 @@ int main(int argc, char **argv)
 	if (mode && strcmp(mode, "--test") == 0)
 		return color_cycle(&d, &cfg);
 
+	if (mode && strcmp(mode, "--white") == 0)
+		return hold_white(&d, &cfg);
+
 	if (panel_init(&d, &cfg) < 0) {
 		fprintf(stderr, "ST7789 initialization failed\n");
 		return 1;
 	}
+
+	/*
+	 * Unambiguous power-on signal. A full white frame is the one state nobody
+	 * can mistake for a dead panel or a blanked backlight, so the first thing
+	 * the daemon draws is white, before any dashboard content.
+	 */
+	fill(&d, 0xffff);
+	if (flush(&d) < 0)
+		fprintf(stderr, "spi: white splash failed: %s\n", strerror(errno));
+	else
+		fprintf(stderr, "white splash drawn; a dark glass here means the panel is not receiving\n");
+	msleep(3000);
 
 	keys = open_keys();
 	last_activity = time(NULL);
