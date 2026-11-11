@@ -1,17 +1,16 @@
 From: YSPEED firmware maintainers
-Subject: [PATCH] spi: mt7621: accept SPI_NO_CS for a GPIO-driven panel chip select
+Subject: [PATCH] spi: mt7621: allow SPI_NO_CS for GPIO-driven panel chip select
 
-The YS-GPS-12832 panel chip select is driven from userspace on GPIO6, so the
-spidev device asks for SPI_NO_CS. The SPI core rejects any mode bit the
-controller does not advertise, so the capability has to be declared here.
-
-The controller's native chip-select callback still runs for this device: in
-spi_set_cs(), SPI_NO_CS is honoured only on the GPIO-chip-select path. That is
-harmless because the CS1 pad is muxed to GPIO, so the controller's CS output
-does not reach the panel.
+The YS-GPS-12832 vendor display maps LCD SPI_CS to SoC GPIO6. The userspace
+ST7789 driver drives that pad explicitly and must disable the controller's
+native CS output while retaining SPI0 clock/data transfers.
 
 --- a/drivers/spi/spi-mt7621.c
 +++ b/drivers/spi/spi-mt7621.c
-@@ -323 +323 @@ static int mt7621_spi_probe(struct platform_device *pdev)
+@@ -163 +163,3 @@
++	if (spi->mode & SPI_NO_CS)
++		mt7621_spi_set_native_cs(spi, false);
+ 	return mt7621_spi_prepare(spi, speed);
+@@ -323 +325 @@
 -	host->mode_bits = SPI_LSB_FIRST;
 +	host->mode_bits = SPI_LSB_FIRST | SPI_NO_CS;

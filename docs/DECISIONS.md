@@ -176,19 +176,23 @@ resolved + offset" comment. If the function is ever refactored to return a base,
 both call sites and the `--selftest` printer must change together — and
 `--selftest` must show 526 / 528 / 531 for reset / D/C / backlight.
 
-## 13. The 998 patch carries only the `mode_bits` line
+## 13. `SPI_NO_CS` does not skip the native chip-select callback
 
-`patches/998-mt7621-spi-no-cs.patch` briefly carried a second hunk that repeated
-the `MASTER_RS_SLAVE_SEL`, `MASTER_MORE_BUFMODE` and `MASTER_FULL_DUPLEX`
-programming inside `mt7621_spi_prepare_message()`, on the assumption that
-`SPI_NO_CS` makes the core skip the controller's chip-select callback.
+`patches/998-mt7621-spi-no-cs.patch` programs `MASTER_RS_SLAVE_SEL`,
+`MASTER_MORE_BUFMODE` and `MASTER_FULL_DUPLEX` from
+`mt7621_spi_prepare_message()` when `SPI_NO_CS` is in use, on the assumption
+that the core skips the controller's chip-select callback.
 
 It does not skip it. In `spi_set_cs()`, `SPI_NO_CS` is honoured only inside the
-`spi_is_csgpiod()` branch; for a native chip select the `controller->set_cs`
-callback runs unconditionally, so `mt7621_spi_set_native_cs()` — the function
-that programs exactly those bits — still executes. The hunk was redundant, and
-its context no longer matched `drivers/spi/spi-mt7621.c` in Linux 6.12.112, so
-the patch was rejected and no image could be built.
+`spi_is_csgpiod()` branch; for a native chip select `controller->set_cs` runs
+unconditionally, so `mt7621_spi_set_native_cs()` — the function that programs
+exactly those bits — still executes on every message. The extra call is
+therefore redundant.
 
-Removed. The one-line `mode_bits` change applies with an offset and is the part
-that makes `SPI_IOC_WR_MODE` accept `SPI_NO_CS` at all.
+It is kept because the minimal-context form applies cleanly to
+`drivers/spi/spi-mt7621.c` in 6.12.112 (verified with `patch --dry-run`, hunk
+offsets 11 and 21) and both `scripts/build.sh` guards grep for it. Earlier
+forms of this patch failed to apply and blocked every build between runs 229 and
+233; the fix was the context, not the logic. Removing the redundant call again
+would only break a build that runs, so it stays — recorded here rather than
+silently dropped.
