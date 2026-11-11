@@ -7,39 +7,10 @@ native CS output while retaining SPI0 clock/data transfers.
 
 --- a/drivers/spi/spi-mt7621.c
 +++ b/drivers/spi/spi-mt7621.c
-@@ -150,15 +150,31 @@
- static int mt7621_spi_prepare_message(struct spi_controller *host,
- 				      struct spi_message *m)
- {
- 	struct mt7621_spi *rs = spi_controller_get_devdata(host);
- 	struct spi_device *spi = m->spi;
- 	unsigned int speed = spi->max_speed_hz;
- 	struct spi_transfer *t = NULL;
-+	int ret;
-+	u32 host_cfg;
-+
- 	mt7621_spi_wait_till_ready(rs);
- 
- 	list_for_each_entry(t, &m->transfers, transfer_list)
- 		if (t->speed_hz < speed)
- 			speed = t->speed_hz;
- 
--	return mt7621_spi_prepare(spi, speed);
-+	ret = mt7621_spi_prepare(spi, speed);
-+	if (ret)
-+		return ret;
-+
-+	/* SPI_NO_CS skips set_cs(); retain the MT7621 transfer-engine setup. */
-+	if (spi->mode & SPI_NO_CS) {
-+		host_cfg = mt7621_spi_read(rs, MT7621_SPI_MASTER);
-+		host_cfg |= MASTER_RS_SLAVE_SEL | MASTER_MORE_BUFMODE;
-+		host_cfg &= ~MASTER_FULL_DUPLEX;
-+		mt7621_spi_write(rs, MT7621_SPI_MASTER, host_cfg);
-+		rs->pending_write = 0;
-+	}
-+
-+	return 0;
- }
-@@ -323 +323 @@ static int mt7621_spi_probe(struct platform_device *pdev)
+@@ -163 +163,3 @@
++	if (spi->mode & SPI_NO_CS)
++		mt7621_spi_set_native_cs(spi, false);
+ 	return mt7621_spi_prepare(spi, speed);
+@@ -323 +325 @@
 -	host->mode_bits = SPI_LSB_FIRST;
 +	host->mode_bits = SPI_LSB_FIRST | SPI_NO_CS;
