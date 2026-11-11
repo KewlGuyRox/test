@@ -1126,6 +1126,8 @@ static int panel_probe(struct display *d, const struct config *cfg)
 	printf("== yspeed-display panel probe: %u variants ==\n", n);
 	for (unsigned i = 0; i < n; i++) {
 		int rc;
+		struct timespec t0, t1;
+		long ms;
 
 		g_dc_invert = combos[i].dc_inv;
 		g_cs_hold = combos[i].cs_hold;
@@ -1146,10 +1148,25 @@ static int panel_probe(struct display *d, const struct config *cfg)
 			goto next;
 		}
 		fill(d, 0xffff);
+		clock_gettime(CLOCK_MONOTONIC, &t0);
 		if (flush(d) < 0) {
 			printf("  frame failed: %s\n", strerror(errno));
 			goto next;
 		}
+		clock_gettime(CLOCK_MONOTONIC, &t1);
+		ms = (t1.tv_sec - t0.tv_sec) * 1000L +
+		     (t1.tv_nsec - t0.tv_nsec) / 1000000L;
+		/*
+		 * 307200 bytes at 40 MHz needs about 61 ms, at 1 MHz about 2.5 s.
+		 * A frame that returns in no time at all was never clocked out, which
+		 * is the difference between "the panel ignored us" and "nothing was
+		 * ever sent".
+		 */
+		if (ms > 0)
+			printf("  frame: 307200 B in %ld ms (~%ld kbit/s)\n", ms,
+			       (long)(PANEL_W * PANEL_H * 2L * 8L / ms));
+		else
+			printf("  frame: returned in under 1 ms - no data was clocked\n");
 		msleep(3000);
 	next:
 		gpio_set(d->cs, 1);
