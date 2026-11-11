@@ -1,0 +1,21 @@
+From: YSPEED firmware maintainers
+Subject: [PATCH] spi: mt7621: report transfer timeouts instead of discarding them
+
+mt7621_spi_wait_till_ready() returns -ETIMEDOUT when the controller never
+clears SPITRANS_BUSY, but every caller ignores the result, so transfer_one()
+reports success to userspace even though no data was shifted. On the
+YS-GPS-12832 that is indistinguishable from a working display bus.
+
+Log the failure (rate limited) so a stalled controller shows up in dmesg
+instead of looking like a successful transfer.
+
+--- a/drivers/spi/spi-mt7621.c
++++ b/drivers/spi/spi-mt7621.c
+@@ -154,6 +154,7 @@
+ 		udelay(1);
+ 	}
+ 
++	pr_err_ratelimited("spi-mt7621: transfer timeout, controller still busy\n");
+ 	return -ETIMEDOUT;
+ }
+ 

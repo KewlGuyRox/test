@@ -65,6 +65,7 @@ sh "$PROJECT_DIR/scripts/disable-wireless-defaults.sh" "$SRC"
 # "make target/linux/prepare", is reviewable in git, and is not a hidden
 # in-place sed. Applied with -p1 from the kernel source root.
 mkdir -p "$SRC/target/linux/ramips/patches-6.12"
+cp "$PROJECT_DIR/patches/997-mt7621-log-transfer-timeout.patch" "$SRC/target/linux/ramips/patches-6.12/"
 cp "$PROJECT_DIR/patches/998-mt7621-spi-no-cs.patch" "$SRC/target/linux/ramips/patches-6.12/"
 cp "$PROJECT_DIR/patches/999-spidev-yspeed-match.patch" "$SRC/target/linux/ramips/patches-6.12/"
 
@@ -137,6 +138,10 @@ grep -qF 'host->mode_bits = SPI_LSB_FIRST | SPI_NO_CS;' "$SPI_MASTER_SOURCE" || 
 }
 grep -qF 'mt7621_spi_set_native_cs(spi, false);' "$SPI_MASTER_SOURCE" || {
   echo "MT7621 SPI_NO_CS controller setup patch did not apply" >&2
+  exit 4
+}
+grep -qF 'transfer timeout, controller still busy' "$SPI_MASTER_SOURCE" || {
+  echo "MT7621 timeout-reporting patch did not apply" >&2
   exit 4
 }
 DISPLAY_SOURCE="$PROJECT_DIR/package/yspeed-display/src/yspeed-display.c"
