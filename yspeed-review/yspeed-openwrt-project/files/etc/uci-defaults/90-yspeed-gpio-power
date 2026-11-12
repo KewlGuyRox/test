@@ -1,0 +1,33 @@
+#!/bin/sh
+# The stock firmware's /etc/rc.local drives SoC pin 15 high and leaves it
+# there for the whole session:
+#
+#     echo 495 > /sys/class/gpio/export
+#     echo out > /sys/class/gpio/gpio495/direction
+#     echo 1   > /sys/class/gpio/gpio495/value
+#
+# Nothing else in the vendor image touches that line. Its GNSS module shows two
+# solid white LEDs even with no fix, and ours never light, so the module is
+# almost certainly unpowered on our images and this is its enable.
+#
+# The pin is driven low for a second before going high on purpose. The 8250
+# driver brings the idle-high UART TX line up long before init scripts run, and
+# a UART TX driving an unpowered module's RX back-powers it through its input
+# protection, which can leave it latched in a brown-out state. A clean 0 -> 1
+# after the UART is already up is a real power cycle for the module.
+#
+# GPIO_DYNAMIC_BASE is pinned to 480, so sysfs 495 is the same physical pin as
+# on the vendor. uci-defaults run inside /etc/init.d/boot, ahead of gpsd and the
+# display daemon; the display daemon claims the same line as a fallback.
+
+[ -d /sys/class/gpio ] || exit 0
+
+[ -e /sys/class/gpio/gpio495 ] || echo 495 > /sys/class/gpio/export 2>/dev/null
+[ -e /sys/class/gpio/gpio495/direction ] || exit 0
+
+echo out > /sys/class/gpio/gpio495/direction 2>/dev/null
+echo 0 > /sys/class/gpio/gpio495/value 2>/dev/null
+sleep 1
+echo 1 > /sys/class/gpio/gpio495/value 2>/dev/null
+
+exit 0
