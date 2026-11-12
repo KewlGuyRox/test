@@ -29,12 +29,12 @@ define Build/Compile
 		-o $(PKG_BUILD_DIR)/yspeed-display $(PKG_BUILD_DIR)/yspeed-display.c
 endef
 
+# st7789_display is the vendor's own statically linked MIPS/musl program, the
+# one that lights this panel on the stock firmware. Shipping it lets us run a
+# known-good driver against our kernel instead of guessing.
 define Package/yspeed-display/install
 	$(INSTALL_DIR) $(1)/usr/sbin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/yspeed-display $(1)/usr/sbin/yspeed-display
-	# Vendor reference binary: same statically linked MIPS/musl program that
-	# lights the panel on the stock firmware. Running it here separates a
-	# userspace bug from a kernel/SPI wiring bug.
 	$(INSTALL_BIN) ./files/st7789_display $(1)/usr/sbin/st7789_display
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/yspeed-display.init $(1)/etc/init.d/yspeed-display

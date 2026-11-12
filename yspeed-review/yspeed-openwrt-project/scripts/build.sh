@@ -136,8 +136,12 @@ grep -qF 'host->mode_bits = SPI_LSB_FIRST | SPI_NO_CS;' "$SPI_MASTER_SOURCE" || 
   echo "MT7621 SPI_NO_CS patch did not apply; manual LCD chip-select is unavailable" >&2
   exit 4
 }
-grep -qF 'mt7621_spi_set_native_cs(spi, false);' "$SPI_MASTER_SOURCE" || {
-  echo "MT7621 SPI_NO_CS controller setup patch did not apply" >&2
+# The vendor runs with POLAR=0, i.e. native CS1 asserted for the whole session.
+# The patch must therefore ASSERT CS1 in the SPI_NO_CS path, never release it:
+# releasing it is what left every earlier build clocking data into a deselected
+# panel. Assert the exact call so that regression cannot come back silently.
+grep -qF 'mt7621_spi_set_native_cs(spi, true);' "$SPI_MASTER_SOURCE" || {
+  echo "MT7621 SPI_NO_CS patch must hold CS1 asserted (set_native_cs(spi, true))" >&2
   exit 4
 }
 grep -qF 'transfer timeout, controller still busy' "$SPI_MASTER_SOURCE" || {
