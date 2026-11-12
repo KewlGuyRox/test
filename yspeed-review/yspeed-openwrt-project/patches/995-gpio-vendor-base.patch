@@ -1,0 +1,31 @@
+From: YSPEED firmware maintainers
+Subject: [PATCH] gpio: start dynamic allocation at 480 to match vendor numbering
+
+The YS-GPS-12832 stock firmware (MT7628) enumerates its three 32-line GPIO
+banks from 480 downwards (ARCH_NR_GPIOS 512, allocated downwards) and all of
+its userspace, including the display binary, assumes those numbers: 486 for
+SPI CS, 494 reset, 496 D/C, 499 backlight. Mainline's dynamic allocator starts
+at 512 instead, so the same pads appear as 518/526/528/531 and the vendor
+binary cannot export its pins. Start dynamic allocation at 480.
+
+--- a/include/linux/gpio.h
++++ b/include/linux/gpio.h
+@@ -63,12 +63,16 @@
+ /*
+  * At the end we want all GPIOs to be dynamically allocated from 0.
+  * However, some legacy drivers still perform fixed allocation.
+- * Until they are all fixed, leave 0-512 space for them.
++ * The YS-GPS-12832 stock firmware (MT7628) numbers its three 32-line banks
++ * from 480 downwards, and the vendor userspace - including its display
++ * binary - assumes that numbering. Start dynamic allocation at 480 so the
++ * mainline kernel reproduces it; 0-480 stays reserved for legacy fixed
++ * allocation.
+  */
+-#define GPIO_DYNAMIC_BASE	512
++#define GPIO_DYNAMIC_BASE	480
+ /*
+  * Define the maximum of the possible GPIO in the global numberspace.
+  * While the GPIO base and numbers are positive, we limit it with signed
+  * maximum as a lot of code is using negative values for special cases.
+  */
+ #define GPIO_DYNAMIC_MAX	INT_MAX

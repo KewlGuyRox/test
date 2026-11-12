@@ -65,6 +65,7 @@ sh "$PROJECT_DIR/scripts/disable-wireless-defaults.sh" "$SRC"
 # "make target/linux/prepare", is reviewable in git, and is not a hidden
 # in-place sed. Applied with -p1 from the kernel source root.
 mkdir -p "$SRC/target/linux/ramips/patches-6.12"
+cp "$PROJECT_DIR/patches/995-gpio-vendor-base.patch" "$SRC/target/linux/ramips/patches-6.12/"
 cp "$PROJECT_DIR/patches/997-mt7621-log-transfer-timeout.patch" "$SRC/target/linux/ramips/patches-6.12/"
 cp "$PROJECT_DIR/patches/998-mt7621-spi-no-cs.patch" "$SRC/target/linux/ramips/patches-6.12/"
 cp "$PROJECT_DIR/patches/999-spidev-yspeed-match.patch" "$SRC/target/linux/ramips/patches-6.12/"
@@ -146,6 +147,16 @@ grep -qF 'mt7621_spi_set_native_cs(spi, true);' "$SPI_MASTER_SOURCE" || {
 }
 grep -qF 'transfer timeout, controller still busy' "$SPI_MASTER_SOURCE" || {
   echo "MT7621 timeout-reporting patch did not apply" >&2
+  exit 4
+}
+# The vendor numbers its GPIO banks from 480 and its userspace (including the
+# display binary) hardcodes those numbers. Pin the allocator's starting point
+# and fail the build if the patch did not land.
+KERNEL_TREE="$(dirname "$(dirname "$(dirname "$SPI_MASTER_SOURCE")")")"
+GPIO_HEADER="$KERNEL_TREE/include/linux/gpio.h"
+[[ -f "$GPIO_HEADER" ]] || { echo "Kernel include/linux/gpio.h not found" >&2; exit 4; }
+grep -q '#define GPIO_DYNAMIC_BASE[[:space:]]*480' "$GPIO_HEADER" || {
+  echo "GPIO base patch did not apply; vendor GPIO numbering unavailable" >&2
   exit 4
 }
 DISPLAY_SOURCE="$PROJECT_DIR/package/yspeed-display/src/yspeed-display.c"
@@ -253,6 +264,7 @@ if find "$OUT" -maxdepth 1 -type f \( -name '*yspeed*sysupgrade*' -o -name '*ysp
  echo "DTS SHA256: $(sha256sum "$PROJECT_DIR/board/mt7628an_yspeed_ys-gps-12832.dts" | awk '{print $1}')"
  echo "uImage SHA256: $(sha256sum "$WORKDIR/artifacts/yspeed-ramboot.uImage" | awk '{print $1}')"
  echo "Display: SPI0 CS1 held asserted (vendor NO_CS), 24 MHz"
+echo "GPIO: dynamic base 480 (vendor numbering: CS 486, reset 494, DC 496, BL 499)"
  echo "Build UTC: $(date -u +%FT%TZ)"
  echo "RAM-boot-only; do not flash."
 } > "$WORKDIR/artifacts/build-manifest.txt"
