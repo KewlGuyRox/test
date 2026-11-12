@@ -37,7 +37,7 @@
 #include <sys/ioctl.h>
 
 /* Printed by every mode so a running image can be identified from logread. */
-#define YSPEED_BUILD "sweep-24m"
+#define YSPEED_BUILD "pin15-24m"
 #include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
@@ -58,6 +58,15 @@
 #define GPIO_DC_OFFSET 16
 #define GPIO_RESET_OFFSET 14
 #define GPIO_BACKLIGHT_OFFSET 19
+/*
+ * The stock firmware exports this line too and holds it high for the whole
+ * session; on the vendor box it reads back as gpio495, direction out, value 1,
+ * and nothing in its userspace ever touches it again. Its own configuration
+ * printout names only the four display pins above, so this is an enable of
+ * some kind that the vendor sets and we never did. Drive it high before the
+ * panel is reset, in case it powers the glass or releases the GNSS module.
+ */
+#define GPIO_POWER_OFFSET 15
 
 #define CONFIG_PATH "/etc/lvgl_st7789.conf"
 #define STATUS_BIN "/usr/sbin/yspeed-status"
@@ -279,7 +288,7 @@ static int gpio_lcd_offset_allowed(int offset)
 {
 	return offset == GPIO_CS_OFFSET || offset == GPIO_DC_OFFSET ||
 	       offset == GPIO_RESET_OFFSET || offset == GPIO_BACKLIGHT_OFFSET ||
-	       offset == 15;   /* spare vendor line, a D/C or reset candidate */
+	       offset == GPIO_POWER_OFFSET;
 }
 
 static int gpio_claim(int offset, int *number, int initial)
@@ -389,6 +398,7 @@ static int g_lsb_first;
 static int g_dc_off = GPIO_DC_OFFSET;
 static int g_rst_off = GPIO_RESET_OFFSET;
 static int g_bl_off = GPIO_BACKLIGHT_OFFSET;
+static int g_power_gpio = -1;
 
 static int spi_set_speed(int fd, uint32_t hz)
 {
@@ -1320,6 +1330,19 @@ static int display_open(struct display *d)
 
 static int gpio_open(struct display *d)
 {
+	/*
+	 * Claim the vendor's enable line first and leave it high. It is not part
+	 * of the display configuration the vendor prints, so it was the one line
+	 * we never reproduced; a failure here is not fatal, because the panel
+	 * pins below are what the display itself drives.
+	 */
+	if (gpio_claim(GPIO_POWER_OFFSET, &g_power_gpio, 1) == 0)
+		fprintf(stderr, "GPIO: vendor enable pin %d held high\n",
+			g_power_gpio);
+	else
+		fprintf(stderr, "gpio: warning: vendor enable pin (offset %d) not driven\n",
+			GPIO_POWER_OFFSET);
+
 	/* CS is the controller's native CS1; userspace never claims that pad. */
 	if (gpio_claim(g_dc_off, &d->dc, 0) < 0 ||
 	    gpio_claim(g_rst_off, &d->reset, 1) < 0 ||
