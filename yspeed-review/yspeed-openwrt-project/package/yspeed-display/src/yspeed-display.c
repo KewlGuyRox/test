@@ -5,7 +5,7 @@
  * Hardware facts this file depends on (verified from the vendor DTB, the
  * captured /proc snapshots and the vendor LVGL binary):
  *
- *   SPI      : hardware MT7621 SPI, CS1, 40 MHz  -> /dev/spidev0.1
+ *   SPI      : hardware MT7621 SPI, CS1 held asserted, 24 MHz -> spidev0.1
  *   LCD D/C  : GPIO16   (SoC pin offset, not a sysfs number)
  *   LCD RESET: GPIO14
  *   BACKLIGHT: GPIO19
@@ -37,7 +37,7 @@
 #include <sys/ioctl.h>
 
 /* Printed by every mode so a running image can be identified from logread. */
-#define YSPEED_BUILD "hw-cs-24m"
+#define YSPEED_BUILD "held-cs-24m"
 #include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
@@ -371,7 +371,12 @@ static int spi_write_all(int fd, const uint8_t *buf, size_t len)
 /* ---- panel-probe variants; defaults reproduce the daemon exactly ---- */
 static int g_dc_invert;      /* 1: command=1, data=0 */
 static int g_cs_hold;        /* 1: never deassert CS between commands */
-static int g_hw_cs = 1;      /* 1: hardware CS1 (vendor), 0: software GPIO CS */
+/*
+ * 0: SPI_NO_CS - the controller leaves native CS1 asserted, which is the state
+ *    the vendor firmware runs in (its POLAR register reads 0 and never moves).
+ * 1: native CS1 toggled per SPI message (--hw-cs), kept only for comparison.
+ */
+static int g_hw_cs;
 static int g_skip_reset;     /* 1: no RESET pulse before init */
 static int g_bl_fixed = -1;  /* >=0: drive GPIO19 to this level and leave it */
 static int g_swap_dc_cs;     /* 1: pad 16 carries CS and pad 6 carries D/C */
@@ -401,16 +406,16 @@ static int dc_write(struct display *d, int is_data)
 
 static int cs_assert(struct display *d)
 {
-	if (g_hw_cs)
-		return 0;
-	return gpio_set(g_swap_dc_cs ? d->dc : d->cs, 0);
+	/* CS1 is asserted by the controller (held) or per message (native). */
+	(void)d;
+	return 0;
 }
 
 static int cs_release(struct display *d)
 {
-	if (g_hw_cs || g_cs_hold)
-		return 0;
-	return gpio_set(g_swap_dc_cs ? d->dc : d->cs, 1);
+	/* Never deassert here: the vendor's controller leaves CS1 low. */
+	(void)d;
+	return 0;
 }
 
 static int lcd_cmd(struct display *d, uint8_t cmd, const uint8_t *data, size_t len)
@@ -1254,7 +1259,8 @@ static int panel_probe(struct display *d, const struct config *cfg)
 			printf("  frame: returned in under 1 ms - no data was clocked\n");
 		msleep(3000);
 	next:
-		gpio_set(d->cs, 1);
+		if (d->cs >= 0)
+			gpio_set(d->cs, 1);
 	}
 
 	g_dc_invert = 0;
@@ -1297,18 +1303,18 @@ static int display_open(struct display *d)
 		return -1;
 	}
 	if (g_hw_cs)
-		fprintf(stderr, "SPI: mode 0, %u bits, %u Hz, hardware CS1 (vendor configuration)\n",
+		fprintf(stderr, "SPI: mode 0, %u bits, %u Hz, native CS1 toggled per message\n",
 			bits, speed);
 	else
-		fprintf(stderr, "SPI: mode 0, %u bits, %u Hz, software CS on GPIO offset %d\n",
-			bits, speed, GPIO_CS_OFFSET);
+		fprintf(stderr, "SPI: mode 0, %u bits, %u Hz, CS1 held asserted (vendor NO_CS)\n",
+			bits, speed);
 	return 0;
 }
 
 static int gpio_open(struct display *d)
 {
-	if ((!g_hw_cs && gpio_claim(GPIO_CS_OFFSET, &d->cs, 1) < 0) ||
-	    gpio_claim(GPIO_DC_OFFSET, &d->dc, 0) < 0 ||
+	/* CS is the controller's native CS1; userspace never claims that pad. */
+	if (gpio_claim(GPIO_DC_OFFSET, &d->dc, 0) < 0 ||
 	    gpio_claim(GPIO_RESET_OFFSET, &d->reset, 1) < 0 ||
 	    gpio_claim(GPIO_BACKLIGHT_OFFSET, &d->backlight, 0) < 0) {
 		fprintf(stderr, "unable to claim ST7789 GPIO lines\n");
