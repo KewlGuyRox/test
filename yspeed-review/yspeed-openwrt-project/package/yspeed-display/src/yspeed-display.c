@@ -37,7 +37,7 @@
 #include <sys/ioctl.h>
 
 /* Printed by every mode so a running image can be identified from logread. */
-#define YSPEED_BUILD "held-cs-24m"
+#define YSPEED_BUILD "sweep-24m"
 #include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
@@ -278,7 +278,8 @@ static int gpio_chip_base_for(int offset)
 static int gpio_lcd_offset_allowed(int offset)
 {
 	return offset == GPIO_CS_OFFSET || offset == GPIO_DC_OFFSET ||
-	       offset == GPIO_RESET_OFFSET || offset == GPIO_BACKLIGHT_OFFSET;
+	       offset == GPIO_RESET_OFFSET || offset == GPIO_BACKLIGHT_OFFSET ||
+	       offset == 15;   /* spare vendor line, a D/C or reset candidate */
 }
 
 static int gpio_claim(int offset, int *number, int initial)
@@ -383,6 +384,11 @@ static int g_swap_dc_cs;     /* 1: pad 16 carries CS and pad 6 carries D/C */
 static int g_reset_mode;     /* 0 normal, 2 inverted, 3 held low, 4 held high */
 
 static uint32_t g_spi_hz = SPI_HZ;   /* current clock, used by flush() unless set */
+static uint8_t g_spi_mode = SPI_MODE_0;
+static int g_lsb_first;
+static int g_dc_off = GPIO_DC_OFFSET;
+static int g_rst_off = GPIO_RESET_OFFSET;
+static int g_bl_off = GPIO_BACKLIGHT_OFFSET;
 
 static int spi_set_speed(int fd, uint32_t hz)
 {
@@ -1275,7 +1281,8 @@ static int panel_probe(struct display *d, const struct config *cfg)
 
 static int display_open(struct display *d)
 {
-	uint8_t mode = SPI_MODE_0 | (g_hw_cs ? 0 : SPI_NO_CS);
+	uint8_t mode = g_spi_mode | (g_lsb_first ? SPI_LSB_FIRST : 0) |
+		       (g_hw_cs ? 0 : SPI_NO_CS);
 	uint8_t applied_mode = 0;
 	uint8_t bits = 8;
 	uint32_t speed = SPI_HZ;
@@ -1303,23 +1310,84 @@ static int display_open(struct display *d)
 		return -1;
 	}
 	if (g_hw_cs)
-		fprintf(stderr, "SPI: mode 0, %u bits, %u Hz, native CS1 toggled per message\n",
-			bits, speed);
+		fprintf(stderr, "SPI: mode %u, %u bits, %u Hz, native CS1 toggled per message\n",
+			g_spi_mode, bits, speed);
 	else
-		fprintf(stderr, "SPI: mode 0, %u bits, %u Hz, CS1 held asserted (vendor NO_CS)\n",
-			bits, speed);
+		fprintf(stderr, "SPI: mode %u, %u bits, %u Hz, CS1 held asserted (vendor NO_CS)\n",
+			g_spi_mode, bits, speed);
 	return 0;
 }
 
 static int gpio_open(struct display *d)
 {
 	/* CS is the controller's native CS1; userspace never claims that pad. */
-	if (gpio_claim(GPIO_DC_OFFSET, &d->dc, 0) < 0 ||
-	    gpio_claim(GPIO_RESET_OFFSET, &d->reset, 1) < 0 ||
-	    gpio_claim(GPIO_BACKLIGHT_OFFSET, &d->backlight, 0) < 0) {
+	if (gpio_claim(g_dc_off, &d->dc, 0) < 0 ||
+	    gpio_claim(g_rst_off, &d->reset, 1) < 0 ||
+	    gpio_claim(g_bl_off, &d->backlight, 0) < 0) {
 		fprintf(stderr, "unable to claim ST7789 GPIO lines\n");
 		return -1;
 	}
+	return 0;
+}
+
+/*
+ * One boot, many wiring hypotheses. Each variant re-opens the bus with a
+ * different clock phase and re-claims D/C and reset on different SoC offsets,
+ * then sends a full white frame, so the operator can see which combination,
+ * if any, the glass answers. Reboot-free because every axis we doubt is now a
+ * runtime knob instead of a rebuild.
+ */
+static int panel_sweep(struct display *d, const struct config *cfg)
+{
+	static const struct variant {
+		uint8_t mode;
+		int dc;
+		int rst;
+		uint32_t hz;
+	} variants[] = {
+		{ SPI_MODE_0, 16, 14, 24000000 },	/* wiring we assumed so far */
+		{ SPI_MODE_3, 16, 14, 24000000 },	/* data on the other edge */
+		{ SPI_MODE_0, 15, 14, 24000000 },	/* D/C on the spare vendor pin */
+		{ SPI_MODE_3, 15, 14, 24000000 },
+		{ SPI_MODE_0, 16, 15, 24000000 },	/* reset on the spare vendor pin */
+		{ SPI_MODE_0, 15, 15, 24000000 },
+		{ SPI_MODE_0, 16, 14, 1000000 },	/* slow clock, long wires */
+		{ SPI_MODE_3, 15, 14, 1000000 },
+	};
+	size_t n = sizeof(variants) / sizeof(variants[0]);
+	size_t i;
+
+	for (i = 0; i < n; i++) {
+		const struct variant *v = &variants[i];
+
+		g_spi_mode = v->mode;
+		g_dc_off = v->dc;
+		g_rst_off = v->rst;
+		g_spi_hz = v->hz;
+		printf("\n=== sweep %zu/%zu: SPI mode %u, D/C offset %d, reset offset %d, %u Hz ===\n",
+		       i + 1, n, v->mode, v->dc, v->rst, v->hz);
+		fflush(stdout);
+		if (d->spi >= 0) {
+			close(d->spi);
+			d->spi = -1;
+		}
+		if (display_open(d) < 0 || gpio_open(d) < 0)
+			continue;
+		if (panel_init(d, cfg) < 0) {
+			printf("   init did not complete\n");
+			continue;
+		}
+		fill(d, 0xffff);
+		if (flush(d) < 0)
+			printf("   white frame failed: %s\n", strerror(errno));
+		else
+			printf("   white frame sent - look at the glass now\n");
+		msleep(2500);
+		fill(d, 0x0000);
+		flush(d);
+		msleep(400);
+	}
+	printf("\nsweep finished; if nothing lit, D/C, reset and clock phase are not the fault\n");
 	return 0;
 }
 
@@ -1332,19 +1400,46 @@ int main(int argc, char **argv)
 	int argi;
 
 	for (argi = 1; argi < argc; argi++) {
-		if (strcmp(argv[argi], "--hw-cs") == 0) {
+		const char *a = argv[argi];
+		int has_value = argi + 1 < argc;
+
+		if (strcmp(a, "--hw-cs") == 0) {
 			g_hw_cs = 1;
 			continue;
 		}
-		if (strcmp(argv[argi], "--sw-cs") == 0) {
+		if (strcmp(a, "--sw-cs") == 0) {
 			g_hw_cs = 0;
 			continue;
 		}
+		if (strcmp(a, "--lsb") == 0) {
+			g_lsb_first = 1;
+			continue;
+		}
+		if (strcmp(a, "--dc") == 0 && has_value) {
+			g_dc_off = atoi(argv[++argi]);
+			continue;
+		}
+		if (strcmp(a, "--rst") == 0 && has_value) {
+			g_rst_off = atoi(argv[++argi]);
+			continue;
+		}
+		if (strcmp(a, "--bl") == 0 && has_value) {
+			g_bl_off = atoi(argv[++argi]);
+			continue;
+		}
+		if (strcmp(a, "--mode") == 0 && has_value) {
+			g_spi_mode = (uint8_t)(atoi(argv[++argi]) & 3);
+			continue;
+		}
+		if (strcmp(a, "--speed") == 0 && has_value) {
+			g_spi_hz = (uint32_t)strtoul(argv[++argi], NULL, 0);
+			continue;
+		}
 		if (mode != NULL) {
-			fprintf(stderr, "yspeed-display: unexpected argument '%s'\n", argv[argi]);
+			fprintf(stderr, "yspeed-display: unexpected argument '%s'\n", a);
 			return 2;
 		}
-		mode = argv[argi];
+		mode = a;
 	}
 	struct sigaction sa;
 	int keys;
@@ -1370,9 +1465,11 @@ int main(int argc, char **argv)
 	if (mode && mode[0] == '-' &&
 	    strcmp(mode, "--selftest") != 0 && strcmp(mode, "--test") != 0 &&
 	    strcmp(mode, "--white") != 0 && strcmp(mode, "--panel-probe") != 0 &&
-	    strcmp(mode, "--panel-id") != 0) {
+	    strcmp(mode, "--panel-id") != 0 && strcmp(mode, "--sweep") != 0) {
 		fprintf(stderr, "yspeed-display %s: unknown option '%s'\n"
-			"options: --selftest --test --white --panel-probe --panel-id [--hw-cs|--sw-cs]\n",
+			"options: --selftest --test --white --panel-probe --panel-id --sweep\n"
+			"         [--hw-cs|--sw-cs] [--dc N] [--rst N] [--bl N] [--mode 0|3]\n"
+			"         [--speed HZ] [--lsb]\n",
 			YSPEED_BUILD, mode);
 		return 2;
 	}
@@ -1409,6 +1506,9 @@ int main(int argc, char **argv)
 		printf("RDDID: %02x %02x %02x %02x\n", id[0], id[1], id[2], id[3]);
 		return 0;
 	}
+
+	if (mode && strcmp(mode, "--sweep") == 0)
+		return panel_sweep(&d, &cfg);
 
 	if (mode && strcmp(mode, "--panel-probe") == 0)
 		return panel_probe(&d, &cfg);
