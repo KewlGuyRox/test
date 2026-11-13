@@ -54,15 +54,21 @@ footer{color:#8da3b6;font-size:.8rem;margin-top:16px}
 <div class="kv"><span>Leap status</span><span id="leap">-</span></div>
 <div class="kv"><span>Last offset</span><span id="offset">-</span></div>
 <div class="kv"><span>RMS offset</span><span id="rms">-</span></div></section>
-<section><h2>PPS AND RTC</h2><div class="kv"><span>PPS device</span><span id="ppsdev">-</span></div>
-<div class="kv"><span>Last assert</span><span id="assert">-</span></div>
-<div class="kv"><span>RTC read</span><span id="rtc">-</span></div></section>
+<section><h2>PPS</h2><div class="kv"><span>PPS device</span><span id="ppsdev">-</span></div>
+<div class="kv"><span>Last assert</span><span id="assert">-</span></div></section>
 <section><h2>ETHERNET</h2><div class="kv"><span>Interface</span><span>eth0.2</span></div>
 <div class="kv"><span>IPv4</span><span id="ip">-</span></div>
 <div class="kv"><span>Gateway</span><span id="gw">-</span></div>
 <div class="kv"><span>DNS</span><span id="dns">-</span></div>
 <div class="kv"><span>Uptime</span><span id="uptime">-</span></div></section>
 <section style="grid-column:1/-1"><h2>LIVE SATELLITES</h2><div id="satellites" class="satwrap">Waiting for receiver data...</div><div class="sub">Signal bars use the same receiver snapshot shown on the LCD. Green bars are used in the fix.</div></section>
+<section style="grid-column:1/-1"><h2>CLOCKS</h2>
+<div class="kv"><span>GNSS UTC (satellite time)</span><span id="clockgnss">-</span></div>
+<div class="kv"><span>System UTC</span><span id="clocksysutc">-</span></div>
+<div class="kv"><span>System local</span><span id="clocklocal">-</span></div>
+<div class="kv"><span>Timezone</span><span id="clocktz">-</span></div>
+<div class="kv"><span>RTC (hardware, UTC)</span><span id="clockrtc">-</span></div>
+<div class="sub">GNSS UTC is the receiver's own time solution. The RTC is the DS1307 backed by the coin cell, not satellite time. Local time follows the timezone set in LuCI (System, Timezone).</div></section>
 <section style="grid-column:1/-1"><h2>NTP CLIENTS</h2><div id="serverstats" class="sub">Waiting for chronyd...</div><div id="clients" class="satwrap">No NTP clients have synchronized yet.</div></section>
 <section style="grid-column:1/-1"><h2>DISPLAY SETTINGS</h2>
 <form id="displayform">
@@ -182,7 +188,12 @@ async function refresh() {
 		renderClients(n.clients);
 		show('ppsdev', p.device ? 'present' : 'not detected');
 		show('assert', p.assert);
-		show('rtc', d.rtc);
+		const c = d.clock || {};
+		show('clockgnss', g.utc);
+		show('clocksysutc', c.system_utc);
+		show('clocklocal', c.system_local);
+		show('clocktz', (c.timezone || '') + (c.offset ? ' (' + c.offset + ')' : ''));
+		show('clockrtc', c.rtc_utc);
 		show('ip', net.ipv4);
 		show('gw', net.gateway);
 		show('dns', net.dns);

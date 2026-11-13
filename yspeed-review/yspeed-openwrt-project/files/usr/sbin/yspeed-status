@@ -198,6 +198,16 @@ fi
 pps_assert="$(cat /sys/class/pps/pps0/assert 2>/dev/null || true)"
 pps_clear="$(cat /sys/class/pps/pps0/clear 2>/dev/null || true)"
 rtc="$(hwclock -r 2>/dev/null || true)"
+
+# Three clocks the vendor dashboard separated: system local, system UTC, RTC.
+# GNSS UTC is the receiver's own solution and travels in gnss.utc already.
+system_utc="$(date -u '+%Y-%m-%d %H:%M:%S UTC' 2>/dev/null || true)"
+system_local="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || true)"
+tz_name="$(uci -q get system.@system[0].zonename 2>/dev/null || true)"
+[ -n "$tz_name" ] || tz_name="$(date +%Z 2>/dev/null || true)"
+tz_offset="$(date +%z 2>/dev/null || true)"
+rtc_utc="$(hwclock -u -r 2>/dev/null || true)"
+[ -n "$rtc_utc" ] || rtc_utc="$(hwclock -r 2>/dev/null || true)"
 ip="$(ip -4 -o addr show dev eth0.2 2>/dev/null | awk '{print $4}' | head -n1)"
 gateway="$(ip -4 route show default 2>/dev/null | awk '{print $3}' | head -n1)"
 dns="$(awk '/^nameserver[[:space:]]/{printf "%s%s",sep,$2;sep=" "}' /tmp/resolv.conf.d/resolv.conf.auto 2>/dev/null)"
@@ -237,6 +247,12 @@ printf ',"antenna":{"state":"%s","age_seconds":%s}' "$antenna_state" "$antenna_a
 printf ',"display":{"rotation":%s,"backlight_sleep_time":%s,"language":' "$display_rotation" "$display_sleep"
 json_string "$display_language"; printf '}'
 printf ',"rtc":'; json_string "$rtc"
+printf ',"clock":{"system_utc":'; json_string "$system_utc"
+printf ',"system_local":'; json_string "$system_local"
+printf ',"timezone":'; json_string "$tz_name"
+printf ',"offset":'; json_string "$tz_offset"
+printf ',"rtc_utc":'; json_string "$rtc_utc"
+printf '}'
 printf ',"network":{"interface":"eth0.2","ipv4":'; json_string "$ip"
 printf ',"gateway":'; json_string "$gateway"
 printf ',"dns":'; json_string "$dns"; printf '}'
