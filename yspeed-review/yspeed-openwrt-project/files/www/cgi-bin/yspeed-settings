@@ -1,0 +1,48 @@
+#!/bin/sh
+# Persist the display daemon's settings and restart it.
+#
+# The daemon reads /etc/lvgl_st7789.conf at startup; the on-device key menu
+# writes the same file. This CGI is the web equivalent. It only accepts a
+# same-origin POST so a cross-site form cannot restart the display.
+printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n'
+
+if [ "${REQUEST_METHOD:-}" != "POST" ]; then
+	printf '{"ok":false,"error":"POST required"}\n'
+	exit 0
+fi
+if [ "${HTTP_X_REQUESTED_WITH:-}" != "XMLHttpRequest" ]; then
+	printf '{"ok":false,"error":"forbidden"}\n'
+	exit 0
+fi
+
+len="${CONTENT_LENGTH:-0}"
+case "$len" in ''|*[!0-9]*) len=0 ;; esac
+[ "$len" -gt 2048 ] && len=2048
+body="$(head -c "$len" 2>/dev/null || true)"
+
+rotation="$(printf '%s' "$body" | tr '&' '\n' | sed -n 's/^rotation=//p' | head -n 1)"
+slt="$(printf '%s' "$body" | tr '&' '\n' | sed -n 's/^backlight_sleep_time=//p' | head -n 1)"
+
+case "$rotation" in 0|1|2|3) ;; *) rotation="" ;; esac
+case "$slt" in ''|*[!0-9]*) slt="" ;; esac
+if [ -n "$slt" ] && [ "$slt" -gt 86400 ]; then slt="" ; fi
+if [ -z "$rotation" ] || [ -z "$slt" ]; then
+	printf '{"ok":false,"error":"rotation must be 0-3 and sleep 0-86400"}\n'
+	exit 0
+fi
+
+conf=/etc/lvgl_st7789.conf
+if ! touch "$conf" 2>/dev/null; then
+	printf '{"ok":false,"error":"cannot write %s"}\n' "$conf"
+	exit 0
+fi
+sed -i '/^rotation=/d;/^backlight_sleep_time=/d' "$conf" 2>/dev/null
+if ! printf 'rotation=%s\nbacklight_sleep_time=%s\n' "$rotation" "$slt" >> "$conf" 2>/dev/null; then
+	printf '{"ok":false,"error":"cannot update config"}\n'
+	exit 0
+fi
+
+# Restart in the background so the response is not held open.
+( /etc/init.d/yspeed-display restart >/dev/null 2>&1 & )
+
+printf '{"ok":true,"rotation":%s,"backlight_sleep_time":%s}\n' "$rotation" "$slt"

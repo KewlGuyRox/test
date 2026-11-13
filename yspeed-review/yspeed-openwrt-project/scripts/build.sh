@@ -252,6 +252,7 @@ cp "$PROJECT_DIR/files/etc/hotplug.d/iface/95-yspeed-chrony" "$UPDATE_ROOT/etc/h
 cp "$PROJECT_DIR/files/usr/sbin/yspeed-status" "$UPDATE_ROOT/usr/sbin/"
 cp "$PROJECT_DIR/files/usr/sbin/yspeed-apply-update" "$UPDATE_ROOT/usr/sbin/"
 cp "$PROJECT_DIR/files/www/cgi-bin/yspeed-status" "$UPDATE_ROOT/www/cgi-bin/"
+cp "$PROJECT_DIR/files/www/cgi-bin/yspeed-settings" "$UPDATE_ROOT/www/cgi-bin/"
 cp "$PROJECT_DIR/files/www/yspeed/index.html" "$UPDATE_ROOT/www/yspeed/"
 tar -czf "$WORKDIR/artifacts/yspeed-rack-update.tar.gz" -C "$UPDATE_ROOT" .
 sha256sum "$WORKDIR/artifacts/yspeed-rack-update.tar.gz" > "$WORKDIR/artifacts/yspeed-rack-update.tar.gz.sha256"

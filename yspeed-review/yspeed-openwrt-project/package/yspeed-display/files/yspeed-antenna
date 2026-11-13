@@ -1,0 +1,32 @@
+#!/bin/sh
+# The ATGM336H emits its antenna-status sentence ($GPTXT,...ANTENNA OPEN*25)
+# on both UARTs. gpsd owns ttyS1 for the timing chain, so this helper listens
+# on the receiver's second UART (ttyS2) and records the last state for the
+# dashboard. Nothing else may read ttyS2.
+DEV=/dev/ttyS2
+OUT=/tmp/yspeed-antenna
+
+state=UNKNOWN
+while true; do
+	if [ ! -c "$DEV" ]; then
+		sleep 2
+		continue
+	fi
+	# Canonical mode is enough for line-oriented NMEA; this only disables echo.
+	stty -F "$DEV" 9600 raw -echo -crtscts 2>/dev/null
+	while IFS= read -r line; do
+		case "$line" in
+			*ANTENNA*)
+				value=${line#*ANTENNA }
+				value=${value%%\**}
+				value=$(printf '%s' "$value" | tr -d '\r' | tr 'a-z' 'A-Z')
+				case "$value" in
+					OK|OPEN|SHORT) state=$value ;;
+					*) state=UNKNOWN ;;
+				esac
+				printf '%s %s\n' "$state" "$(date +%s)" > "$OUT"
+				;;
+		esac
+	done < "$DEV"
+	sleep 2
+done

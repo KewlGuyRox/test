@@ -116,9 +116,9 @@ case "${visible_count:-0}" in ''|*[!0-9]*) visible_count=0 ;; esac
 
 chrony="$(chronyc tracking 2>/dev/null || true)"
 sources="$(chronyc sources -v 2>/dev/null || true)"
-leap="$(printf '%s\n' "$chrony" | sed -n 's/^Leap status:[[:space:]]*//p' | head -n1)"
-refid="$(printf '%s\n' "$chrony" | sed -n 's/^Reference ID:[[:space:]]*//p' | head -n1)"
-stratum="$(printf '%s\n' "$chrony" | sed -n 's/^Stratum:[[:space:]]*//p' | head -n1)"
+leap="$(printf '%s\n' "$chrony" | sed -n 's/^Leap status[[:space:]]*:[[:space:]]*//p' | head -n1)"
+refid="$(printf '%s\n' "$chrony" | sed -n 's/^Reference ID[[:space:]]*:[[:space:]]*//p' | head -n1)"
+stratum="$(printf '%s\n' "$chrony" | sed -n 's/^Stratum[[:space:]]*:[[:space:]]*//p' | head -n1)"
 last_offset="$(printf '%s\n' "$chrony" | sed -n 's/^Last offset[[:space:]]*:[[:space:]]*//p' | head -n1)"
 rms_offset="$(printf '%s\n' "$chrony" | sed -n 's/^RMS offset[[:space:]]*:[[:space:]]*//p' | head -n1)"
 case "$leap" in
@@ -137,6 +137,64 @@ case "$mode" in
         fi
         ;;
 esac
+# NTP clients served (chrony's in-memory client table).
+clients_raw="$(chronyc clients 2>/dev/null || true)"
+clients_json="$(printf '%s\n' "$clients_raw" | awk '
+    BEGIN { printf "["; sep = "" }
+    /^Hostname/ || /^===/ || /^[[:space:]]*$/ { next }
+    /^[0-9]+ Number/ { next }
+    {
+        host = $1; ntp = $2 + 0; drop = $3 + 0; last = $6;
+        gsub(/\\/, "", host); gsub(/"/, "", host);
+        if (host == "") next;
+        printf "%s{\"host\":\"%s\",\"ntp\":%d,\"drop\":%d,\"last\":\"%s\"}", sep, host, ntp, drop, last;
+        sep = ",";
+    }
+    END { printf "]" }')"
+case "$clients_json" in \[*\]) ;; *) clients_json="[]" ;; esac
+
+serverstats_raw="$(chronyc serverstats 2>/dev/null || true)"
+ss_recv="$(printf '%s\n' "$serverstats_raw" | sed -n 's/^NTP packets received[[:space:]]*:[[:space:]]*//p' | head -n 1)"
+ss_drop="$(printf '%s\n' "$serverstats_raw" | sed -n 's/^NTP packets dropped[[:space:]]*:[[:space:]]*//p' | head -n 1)"
+ss_cmd="$(printf '%s\n' "$serverstats_raw" | sed -n 's/^Command packets received[[:space:]]*:[[:space:]]*//p' | head -n 1)"
+case "$ss_recv" in ''|*[!0-9]*) ss_recv=0 ;; esac
+case "$ss_drop" in ''|*[!0-9]*) ss_drop=0 ;; esac
+case "$ss_cmd" in ''|*[!0-9]*) ss_cmd=0 ;; esac
+
+# Antenna status from the ttyS2 reader, if it has seen a GPTXT sentence.
+antenna_state=unknown
+antenna_age=null
+if [ -r /tmp/yspeed-antenna ]; then
+    read -r antenna_state antenna_ts < /tmp/yspeed-antenna || true
+    case "$antenna_state" in OK|OPEN|SHORT) ;; *) antenna_state=unknown ;; esac
+    case "$antenna_ts" in ''|*[!0-9]*) ;;
+        *)
+            now_ts="$(date +%s 2>/dev/null || true)"
+            case "$now_ts" in ''|*[!0-9]*) ;;
+                *)
+                    antenna_age=$((now_ts - antenna_ts))
+                    [ "$antenna_age" -lt 0 ] && antenna_age=0
+                ;;
+            esac
+        ;;
+    esac
+fi
+
+# Display settings the daemon reads at startup.
+display_rotation=3
+display_sleep=120
+display_language=english
+if [ -r /etc/lvgl_st7789.conf ]; then
+    while IFS='=' read -r dk dv; do
+        dv="$(printf '%s' "$dv" | tr -d '\r')"
+        case "$dk" in
+            rotation) case "$dv" in 0|1|2|3) display_rotation=$dv ;; esac ;;
+            backlight_sleep_time) case "$dv" in ''|*[!0-9]*) ;; *) display_sleep=$dv ;; esac ;;
+            language) [ -n "$dv" ] && display_language=$dv ;;
+        esac
+    done < /etc/lvgl_st7789.conf
+fi
+
 pps_assert="$(cat /sys/class/pps/pps0/assert 2>/dev/null || true)"
 pps_clear="$(cat /sys/class/pps/pps0/clear 2>/dev/null || true)"
 rtc="$(hwclock -r 2>/dev/null || true)"
@@ -169,10 +227,15 @@ printf ',"last_offset":'; json_string "$last_offset"
 printf ',"rms_offset":'; json_string "$rms_offset"
 printf ',"tracking":'; json_string "$chrony"
 printf ',"sources":'; json_string "$sources"
+printf ',"clients":%s' "$clients_json"
+printf ',"server_stats":{"received":%s,"dropped":%s,"cmd_received":%s}' "$ss_recv" "$ss_drop" "$ss_cmd"
 printf '}'
 printf ',"pps":{"device":%s,"assert":' "$([ -e /dev/pps0 ] && echo true || echo false)"
 json_string "$pps_assert"
 printf ',"clear":'; json_string "$pps_clear"; printf '}'
+printf ',"antenna":{"state":"%s","age_seconds":%s}' "$antenna_state" "$antenna_age"
+printf ',"display":{"rotation":%s,"backlight_sleep_time":%s,"language":' "$display_rotation" "$display_sleep"
+json_string "$display_language"; printf '}'
 printf ',"rtc":'; json_string "$rtc"
 printf ',"network":{"interface":"eth0.2","ipv4":'; json_string "$ip"
 printf ',"gateway":'; json_string "$gateway"
